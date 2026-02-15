@@ -112,7 +112,7 @@ if not df.empty:
         summary_text = "\n".join(final_list)
         st.sidebar.text_area("주문 내역", value=summary_text, height=200)
         
-        if st.sidebar.button("🚀 사장님께 주문 보내기"):
+        if st.sidebar.button("🚀 스트라우만 담당자에게 주문 보내기"):
             if not customer_name or not manager_name:
                 st.sidebar.error("거래처명/담당자명을 입력하세요!")
             else:
@@ -128,3 +128,4 @@ if not df.empty:
     if st.sidebar.button("🗑️ 장바구니 초기화"):
         st.session_state['order_data'] = {}
         st.rerun()
+
