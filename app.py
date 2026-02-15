@@ -8,7 +8,7 @@ st.set_page_config(page_title="주문 시스템", layout="centered")
 
 # --- 1. 담당자 설정 (아이디 반영) ---
 SALES_REPS = {
-    "lee": {"name": "사장님", "id": "1781982606"},
+    "lee": {"name": "이정현 과장", "id": "1781982606"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
     "jang": {"name": "장세진 차장", "id": "여기에_장차장님_ID_입력"}
 }
@@ -137,3 +137,4 @@ if st.session_state['cart']:
 if st.sidebar.button("🗑️ 장바구니 초기화", use_container_width=True):
     st.session_state['cart'] = {}
     st.rerun()
+
