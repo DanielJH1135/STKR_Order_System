@@ -3,10 +3,10 @@ import pandas as pd
 import requests
 import os
 
-# --- [규칙] 반드시 코드 최상단에 위치해야 함 ---
+# --- [규칙] 반드시 코드 최상단에 위치 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
-# --- 1. 담당자 및 텔레그램 설정 (이정현 과장 반영) ---
+# --- 1. 담당자 및 텔레그램 설정 ---
 SALES_REPS = {
     "lee": {"name": "이정현 과장", "id": "1781982606"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
@@ -73,8 +73,8 @@ st.markdown("""
 st.title(f"🛒 {current_rep['name']} 주문채널")
 st.info(f"수신 담당자: {current_rep['name']}")
 
-# --- 5. 사이드바 정보 입력 ---
-st.sidebar.header("🏢 필수 정보 입력")
+# --- 5. 사이드바 구성 (정보 입력 + 필터 + 장바구니) ---
+st.sidebar.header("🏢 주문 정보 입력")
 cust_name = st.sidebar.text_input("거래처명 (필수)", placeholder="예: 가나다치과")
 mgr_name = st.sidebar.text_input("담당자명 (필수)", placeholder="예: 홍길동 과장")
 
@@ -83,11 +83,42 @@ st.sidebar.header("🔍 품목 필터")
 cat = st.sidebar.selectbox("제품군", ["전체"] + sorted(df['제품군 대그룹 (Product Group)'].unique()))
 mat = st.sidebar.selectbox("재질", ["전체"] + sorted(df['재질/표면처리'].unique()))
 
+# --- [추가] 사이드바 실시간 장바구니 영역 ---
+st.sidebar.divider()
+st.sidebar.subheader("🛒 실시간 장바구니")
+
+if st.session_state['cart']:
+    # 장바구니 내역 요약
+    cart_items = [f"• {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()]
+    st.sidebar.info("\n".join(cart_items))
+    
+    # 전송 버튼을 사이드바에 배치
+    if st.sidebar.button(f"🚀 {current_rep['name']}에게 전송", use_container_width=True, type="primary"):
+        if not cust_name or not mgr_name:
+            st.sidebar.error("⚠️ 거래처명과 담당자명을 입력해주세요!")
+        else:
+            order_summary = "\n".join([f"- {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
+            full_msg = f"🔔 [{current_rep['name']}] 주문 접수\n🏢 {cust_name}\n👤 {mgr_name}\n----\n{order_summary}"
+            
+            success, res = send_telegram(full_msg, current_rep['id'])
+            if success:
+                st.sidebar.success("✅ 전송 성공!")
+                st.balloons()
+            else:
+                st.sidebar.error(f"❌ 실패: {res}")
+    
+    if st.sidebar.button("🗑️ 장바구니 초기화", use_container_width=True):
+        st.session_state['cart'] = {}
+        st.rerun()
+else:
+    st.sidebar.warning("🛒 품목을 선택해주세요.")
+
+
+# --- 6. 품목 리스트 (메인 화면) ---
 f_df = df.copy()
 if cat != "전체": f_df = f_df[f_df['제품군 대그룹 (Product Group)'] == cat]
 if mat != "전체": f_df = f_df[f_df['재질/표면처리'] == mat]
 
-# --- 6. 품목 리스트 (모바일 카드형) ---
 st.write(f"조회된 품목: **{len(f_df)}** 건")
 
 for idx, row in f_df.iterrows():
@@ -110,30 +141,3 @@ for idx, row in f_df.iterrows():
         else:
             if item_key in st.session_state['cart']:
                 del st.session_state['cart'][item_key]
-
-# --- 7. 주문하기 버튼 ---
-st.markdown("---")
-if st.session_state['cart']:
-    st.subheader("📋 선택한 품목 확인")
-    cart_list = [f"• {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()]
-    st.info("\n".join(cart_list))
-    
-    if st.button(f"🚀 {current_rep['name']}에게 주문 전송", use_container_width=True, type="primary"):
-        if not cust_name or not mgr_name:
-            st.warning("⚠️ 왼쪽 메뉴를 열어 **거래처명과 담당자명**을 입력해주세요!")
-        else:
-            order_summary = "\n".join([f"- {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
-            full_msg = f"🔔 [{current_rep['name']}] 주문 접수\n🏢 {cust_name}\n👤 {mgr_name}\n----\n{order_summary}"
-            
-            success, res = send_telegram(full_msg, current_rep['id'])
-            if success:
-                st.balloons()
-                st.success("✅ 주문이 전송되었습니다!")
-            else:
-                st.error(f"❌ 전송 실패: {res}")
-else:
-    st.warning("🛒 품목을 체크하고 수량을 입력하면 주문 버튼이 나타납니다.")
-
-if st.sidebar.button("🗑️ 장바구니 초기화", use_container_width=True):
-    st.session_state['cart'] = {}
-    st.rerun()
