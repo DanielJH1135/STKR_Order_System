@@ -3,10 +3,10 @@ import pandas as pd
 import requests
 import os
 
-# --- [규칙] 반드시 최상단 ---
+# --- [규칙] 최상단 설정 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
-# --- 1. 담당자 설정 (이정현 과장님 ID 반영) ---
+# --- 1. 담당자 설정 ---
 SALES_REPS = {
     "lee": {"name": "이정현 과장", "id": "1781982606"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
@@ -22,7 +22,7 @@ def send_telegram(msg, chat_id):
     except Exception as e:
         return False, str(e)
 
-# --- 2. 주문코드 보정 (021.0010 형식) ---
+# --- 2. 주문코드 보정 ---
 def format_order_code(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
@@ -44,7 +44,7 @@ def load_data():
     except Exception as e:
         return None, str(e)
 
-# --- 3. 담당자 판별 (URL 파라미터) ---
+# --- 3. 담당자 판별 ---
 try:
     rep_key = st.query_params.get("rep", "lee")
 except:
@@ -60,78 +60,95 @@ if df is None:
     st.error(f"데이터 로드 실패: {load_msg}")
     st.stop()
 
-# 모바일 최적화 스타일
-st.markdown("""
-    <style>
-    .stNumberInput { margin-top: -5px; }
-    div[data-testid="stExpander"] { border: 1px solid #ddd; border-radius: 10px; }
-    .stButton button { font-weight: bold; height: 3rem; }
-    </style>
-    """, unsafe_allow_html=True)
+# --- [추가] 5. 최종 확인 팝업창 (Dialog) 함수 ---
+@st.dialog("📋 주문 내용을 확인해 주세요")
+def confirm_order_dialog(summary_list, full_msg):
+    st.write("입력하신 규격과 수량이 맞습니까?")
+    st.divider()
+    # 확인창에서는 주문코드 대신 '규격' 위주로 노출
+    for item in st.session_state['cart'].values():
+        st.write(f"**{item['g']}** ({item['sz']} x {item['ln']}) : **{item['q']}개**")
+    
+    st.divider()
+    if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
+        ok, res = send_telegram(full_msg, current_rep['id'])
+        if ok:
+            st.success("주문이 전송되었습니다!")
+            st.balloons()
+            # 주문 성공 시 장바구니 비우기
+            st.session_state['cart'] = {}
+            st.rerun()
+        else:
+            st.error(f"전송 실패: {res}")
 
-# 상단 타이틀
+# --- 6. 페이지 스타일 및 레이아웃 ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 st.info(f"수신 담당자: {current_rep['name']}")
 
-# --- 5. 사이드바 (정보입력 + 필터 + 장바구니) ---
+# 사이드바
 st.sidebar.header("🏢 주문 정보 입력")
-cust_name = st.sidebar.text_input("거래처명 (필수)", placeholder="예: 가나다치과")
-mgr_name = st.sidebar.text_input("담당자명 (필수)", placeholder="예: 김철수 실장")
+cust_name = st.sidebar.text_input("거래처명 (필수)")
+mgr_name = st.sidebar.text_input("담당자명 (필수)")
 
 st.sidebar.divider()
 st.sidebar.header("🔍 품목 필터")
-cat = st.sidebar.selectbox("제품군", ["전체"] + sorted(df['제품군 대그룹 (Product Group)'].unique()))
-mat = st.sidebar.selectbox("재질", ["전체"] + sorted(df['재질/표면처리'].unique()))
+c_group_col = '제품군 대그룹 (Product Group)'
+c_mat_col = '재질/표면처리'
+cat = st.sidebar.selectbox("제품군", ["전체"] + sorted(df[c_group_col].unique()))
+mat = st.sidebar.selectbox("재질", ["전체"] + sorted(df[c_mat_col].unique()))
 
-# 사이드바 장바구니 실시간 표시
+# 사이드바 장바구니
 st.sidebar.divider()
 st.sidebar.subheader("🛒 실시간 장바구니")
-
 if st.session_state['cart']:
-    cart_items = [f"• {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()]
-    st.sidebar.info("\n".join(cart_items))
+    # 사이드바에는 간략히 표시
+    sidebar_items = [f"• {v['g']}.. / {v['q']}개" for v in st.session_state['cart'].values()]
+    st.sidebar.info("\n".join(sidebar_items))
     
-    if st.sidebar.button(f"🚀 {current_rep['name']}에게 전송", use_container_width=True, type="primary"):
+    if st.sidebar.button(f"🚀 주문 전송하기", use_container_width=True, type="primary"):
         if not cust_name or not mgr_name:
-            st.sidebar.error("⚠️ 거래처명과 담당자명을 입력하세요!")
+            st.sidebar.error("⚠️ 업체명과 담당자명을 입력하세요!")
         else:
-            order_summary = "\n".join([f"- {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
-            full_msg = f"🔔 [{current_rep['name']}] 주문 접수\n🏢 {cust_name}\n👤 {mgr_name}\n----\n{order_summary}"
+            # 텔레그램용 메시지 구성 (사장님 확인용이므로 여기엔 주문코드 포함)
+            order_summary = "\n".join([f"- {v['c']} ({v['g']} {v['sz']}x{v['ln']}) / {v['q']}개" for v in st.session_state['cart'].values()])
+            full_msg = f"🔔 [{current_rep['name']}] 주문\n🏢 {cust_name}\n👤 {mgr_name}\n----\n{order_summary}"
             
-            success, res = send_telegram(full_msg, current_rep['id'])
-            if success:
-                st.sidebar.success("✅ 전송 성공!")
-                st.balloons()
-            else:
-                st.sidebar.error(f"❌ 실패: {res}")
+            # 팝업창 띄우기
+            confirm_order_dialog(order_summary, full_msg)
     
-    if st.sidebar.button("🗑️ 장바구니 초기화", use_container_width=True):
+    if st.sidebar.button("🗑️ 전체 삭제", use_container_width=True):
         st.session_state['cart'] = {}
         st.rerun()
 else:
-    st.sidebar.warning("🛒 수량을 입력하면 담깁니다.")
+    st.sidebar.warning("🛒 수량을 입력하세요.")
 
-# --- 6. 품목 리스트 (체크박스 제거 버전) ---
+# --- 7. 메인 리스트 (카드형) ---
 f_df = df.copy()
-if cat != "전체": f_df = f_df[f_df['제품군 대그룹 (Product Group)'] == cat]
-if mat != "전체": f_df = f_df[f_df['재질/표면처리'] == mat]
+if cat != "전체": f_df = f_df[f_df[c_group_col] == cat]
+if mat != "전체": f_df = f_df[f_df[c_mat_col] == mat]
 
-st.write(f"조회된 품목: **{len(f_df)}** 건")
+st.write(f"검색 결과: **{len(f_df)}** 건")
 
 for idx, row in f_df.iterrows():
     item_key = f"row_{idx}"
     with st.container(border=True):
-        st.markdown(f"**{row['제품군 대그룹 (Product Group)']}**")
+        st.markdown(f"**{row[c_group_col]}**")
         st.code(row['주문코드'])
-        st.caption(f"규격: {row['직경']} x {row['길이']} | {row['재질/표면처리']}")
+        # 직경, 길이 정보를 명확히 노출
+        st.caption(f"📍 규격: {row['직경']} x {row['길이']} | {row[c_mat_col]}")
         
-        # 체크박스 없이 바로 수량 입력
-        prev_qty = st.session_state['cart'].get(item_key, {}).get('q', 0)
-        qty = st.number_input("주문 수량(개)", 0, 1000, key=f"qty_{idx}", value=int(prev_qty))
+        prev_q = st.session_state['cart'].get(item_key, {}).get('q', 0)
+        q = st.number_input("주문 수량(개)", 0, 1000, key=f"qty_{idx}", value=int(prev_q))
 
-        # 0보다 크면 장바구니에 넣고, 0이면 뺌
-        if qty > 0:
-            st.session_state['cart'][item_key] = {'c': row['주문코드'], 'q': qty}
+        if q > 0:
+            # 장바구니에 규격 정보까지 함께 저장 (확인창 노출용)
+            st.session_state['cart'][item_key] = {
+                'c': row['주문코드'], 
+                'q': q, 
+                'g': row[c_group_col], 
+                'sz': row['직경'], 
+                'ln': row['길이']
+            }
         else:
             if item_key in st.session_state['cart']:
                 del st.session_state['cart'][item_key]
