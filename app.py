@@ -139,7 +139,7 @@ if st.session_state['cart']:
     summary = "\n".join(cart_items)
     st.sidebar.text_area("내역 확인", summary, height=200, key="cart_summary_area")
     
-    if st.sidebar.button("🚀 사장님께 주문 전송", key="btn_send_order"):
+    if st.sidebar.button("🚀 스트라우만 담당자에게 주문 전송", key="btn_send_order"):
         if not cust_name or not mgr_name:
             st.sidebar.error("거래처명과 담당자명을 입력해주세요!")
         else:
@@ -159,3 +159,4 @@ else:
 if st.sidebar.button("🗑️ 장바구니 초기화", key="btn_clear_cart"):
     st.session_state['cart'] = {}
     st.rerun()
+
