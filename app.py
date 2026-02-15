@@ -76,4 +76,86 @@ mgr_name = st.sidebar.text_input("담당자명 (필수)", key="manager_input_box
 st.sidebar.divider()
 st.sidebar.header("🔍 품목 필터")
 
-c_group = '제품군 대그룹
+c_group = '제품군 대그룹 (Product Group)'
+c_mat = '재질/표면처리'
+c_code = '주문코드'
+
+category = st.sidebar.selectbox("제품군", ["전체"] + sorted(df[c_group].unique()), key="filter_cat")
+material = st.sidebar.selectbox("재질", ["전체"] + sorted(df[c_mat].unique()), key="filter_mat")
+
+# 필터링 적용
+filtered_df = df.copy()
+if category != "전체":
+    filtered_df = filtered_df[filtered_df[c_group] == category]
+if material != "전체":
+    filtered_df = filtered_df[filtered_df[c_mat] == material]
+
+# --- 6. 메인 주문 리스트 ---
+st.write(f"조회된 품목: {len(filtered_df)}개")
+cols = st.columns([0.5, 3, 1, 1, 1.5])
+for col, header in zip(cols, ["선택", "품목 / 주문코드", "직경", "길이", "수량"]):
+    col.write(f"**{header}**")
+st.divider()
+
+# 에러 방지 핵심: original_index를 사용하여 고유 키 부여
+for i, (original_idx, row) in enumerate(filtered_df.iterrows()):
+    code = row[c_code]
+    item_key = f"row_{original_idx}" # 절대 겹치지 않는 고유 키
+    
+    # 세션에서 현재 상태 불러오기
+    is_in_cart = item_key in st.session_state['cart']
+    current_q = st.session_state['cart'].get(item_key, {}).get('q', 0)
+    
+    r = st.columns([0.5, 3, 1, 1, 1.5])
+    
+    with r[0]:
+        # 체크박스 고유 키 설정
+        sel = st.checkbox("", key=f"chk_{original_idx}", value=is_in_cart)
+    
+    with r[1]:
+        st.markdown(f"**{row[c_group]}**")
+        st.code(code) # 보정된 021.0010 형식 표시
+        st.caption(row[c_mat])
+        
+    with r[2]: st.write(row['직경'])
+    with r[3]: st.write(row['길이'])
+    
+    with r[4]:
+        # 수량 입력창 고유 키 설정
+        q = st.number_input("수량", 0, 1000, key=f"qty_{original_idx}", value=int(current_q), label_visibility="collapsed")
+
+    # 선택 및 수량 변경 시 장바구니 즉시 반영
+    if sel and q > 0:
+        st.session_state['cart'][item_key] = {'c': code, 'q': q}
+    else:
+        st.session_state['cart'].pop(item_key, None)
+
+# --- 7. 장바구니 및 전송 (사이드바) ---
+st.sidebar.divider()
+st.sidebar.subheader("🛒 실시간 장바구니")
+
+if st.session_state['cart']:
+    cart_items = [f"- {v['c']} / {v['q']}개" for v in st.session_state['cart'].values()]
+    summary = "\n".join(cart_items)
+    st.sidebar.text_area("내역 확인", summary, height=200, key="cart_summary_area")
+    
+    if st.sidebar.button("🚀 사장님께 주문 전송", key="btn_send_order"):
+        if not cust_name or not mgr_name:
+            st.sidebar.error("거래처명과 담당자명을 입력해주세요!")
+        else:
+            full_msg = f"🔔 [새 주문 접수]\n🏢 거래처: {cust_name}\n👤 담당자: {mgr_name}\n----\n{summary}"
+            success, res_msg = send_telegram(full_msg)
+            if success:
+                st.balloons()
+                st.sidebar.success("성공적으로 보냈습니다!")
+                # 전송 후 장바구니 비우기 원하시면 아래 주석 해제
+                # st.session_state['cart'] = {}
+                # st.rerun()
+            else:
+                st.sidebar.error(f"전송 실패: {res_msg}")
+else:
+    st.sidebar.info("품목을 체크하고 수량을 입력하세요.")
+
+if st.sidebar.button("🗑️ 장바구니 초기화", key="btn_clear_cart"):
+    st.session_state['cart'] = {}
+    st.rerun()
