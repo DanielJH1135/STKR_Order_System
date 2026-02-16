@@ -89,7 +89,7 @@ def confirm_order_dialog(cust_name, mgr_name):
     st.divider()
     
     is_exchange = st.checkbox("🔄 교환 주문인가요?")
-    st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다.")
+    st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다. Biomaterial은 교환 불가제품입니다.")
     
     st.divider()
     for item in st.session_state['cart'].values():
@@ -172,3 +172,4 @@ for idx, row in f_df.iterrows():
             }
         else:
             st.session_state['cart'].pop(item_key, None)
+
