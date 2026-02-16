@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import os
 
-# --- [규칙] 반드시 코드 최상단에 위치 ---
+# --- [규칙] 반드시 최상단 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
 # --- 1. 담당자 설정 ---
@@ -22,7 +22,7 @@ def send_telegram(msg, chat_id):
     except Exception as e:
         return False, str(e)
 
-# --- 2. 주문코드 보정 (021.0010 형식) ---
+# --- 2. 주문코드 보정 ---
 def format_order_code(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
@@ -49,61 +49,51 @@ try:
     rep_key = st.query_params.get("rep", "lee")
     url_cust = st.query_params.get("cust", "")
 except:
-    rep_key = "lee"
-    url_cust = ""
+    rep_key = "lee"; url_cust = ""
 
 current_rep = SALES_REPS.get(rep_key, SALES_REPS["lee"])
 
-# --- 4. 세션 초기화 ---
-if 'cart' not in st.session_state:
-    st.session_state['cart'] = {}
+if 'cart' not in st.session_state: st.session_state['cart'] = {}
 
 df, load_msg = load_data()
-if df is None:
-    st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
+if df is None: st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
 
-# --- 5. 최종 확인 팝업창 (교환 체크 및 딸깍 문구 포함) ---
+# --- 4. 최종 확인 팝업창 (CS 최적화 문구 생성) ---
 @st.dialog("📋 주문 내용을 확인해 주세요")
-def confirm_order_dialog(cust_name, mgr_name):
+def confirm_order_dialog(cust_name):
     st.write("입력하신 품목과 수량이 맞습니까?")
     st.divider()
     
-    # [사용성 개선] 교환주문 체크박스
     is_exchange = st.checkbox("🔄 교환 주문인가요?")
     st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다.")
     
     st.divider()
-    # 팝업 내 규격 확인용 리스트
     for item in st.session_state['cart'].values():
         st.write(f"• **{item['g']}** ({item['sz']} x {item['ln']}) : **{item['q']}개**")
     
     st.divider()
     if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
-        # 1. 주문 리스트 생성
+        # [과장님 요청] 1. 주문 리스트 생성 (코드 / 수량개)
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
         
-        # 2. 하단 문구 결정 (교환 여부에 따라)
-        footer_action = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
+        # [과장님 요청] 2. 하단 문구 (교환 여부에 따라)
+        action_text = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
         
-        # 3. 사장님 요청 '딸깍 복붙'용 메시지 포맷
-        # 리스트 -> 거래처명 -> 문구 순서
-        full_msg = f"{order_list}\n{cust_name}\n{footer_action}"
+        # [과장님 요청] 3. 최종 메시지 구성 (리스트 -> 한 줄 띄우고 -> 거래처명 + 문구)
+        # 딸깍 복붙을 위해 거래처명과 문구를 한 줄에 배치했습니다.
+        full_msg = f"{order_list}\n\n{cust_name} {action_text}"
         
-        # 전송 실행
         ok, res = send_telegram(full_msg, current_rep['id'])
         if ok:
-            st.success("전송 완료!")
-            st.balloons()
-            st.session_state['cart'] = {}
-            st.rerun()
+            st.success("전송 완료!"); st.balloons()
+            st.session_state['cart'] = {}; st.rerun()
         else:
             st.error(f"전송 실패: {res}")
 
-# --- 6. 메인 UI 및 리스트 ---
+# --- 5. 메인 UI ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
 st.sidebar.header("🏢 주문 정보 입력")
-# 고유 링크 사용 시 거래처명 고정
 cust_name_input = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_name_input = st.sidebar.text_input("담당자명 (필수)")
 
@@ -115,14 +105,14 @@ mat = st.sidebar.selectbox("재질", ["전체"] + sorted(df['재질/표면처리
 st.sidebar.divider()
 st.sidebar.subheader("🛒 실시간 장바구니")
 if st.session_state['cart']:
-    display_items = [f"• {v['g']}.. / {v['q']}개" for v in st.session_state['cart'].values()]
-    st.sidebar.info("\n".join(display_display_items) if 'display_display_items' in locals() else "\n".join(display_items))
+    cart_summary = [f"• {v['g']}.. / {v['q']}개" for v in st.session_state['cart'].values()]
+    st.sidebar.info("\n".join(cart_summary))
     
     if st.sidebar.button(f"🚀 주문 전송하기", use_container_width=True, type="primary"):
         if not cust_name_input or not mgr_name_input:
-            st.sidebar.error("⚠️ 업체명과 담당자명을 확인하세요!")
+            st.sidebar.error("⚠️ 업체명과 담당자명을 입력하세요!")
         else:
-            confirm_order_dialog(cust_name_input, mgr_name_input)
+            confirm_order_dialog(cust_name_input)
 else:
     st.sidebar.warning("🛒 수량을 입력하세요.")
 
