@@ -3,10 +3,10 @@ import pandas as pd
 import requests
 import os
 
-# --- [규칙] 반드시 최상단 ---
+# --- [규칙 1] 반드시 최상단 설정 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
-# --- 1. 담당자 설정 (이정현 과장님 반영) ---
+# --- 1. 담당자 및 텔레그램 설정 ---
 SALES_REPS = {
     "lee": {"name": "이정현 과장", "id": "1781982606"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
@@ -26,11 +26,9 @@ def send_telegram(msg, chat_id):
 def format_order_code(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
-    # Biomaterial 코드는 형식이 다르므로(w 포함) 숫자+점 조합일 때만 보정
     if "." in c and any(char.isdigit() for char in c):
         parts = c.split(".", 1)
         prefix = parts[0].zfill(3) if parts[0].isdigit() else parts[0]
-        # 뒷부분에 문자가 섞여있으면 보존, 숫자만 있으면 4자리 보정
         suffix = parts[1]
         if suffix.isdigit():
             suffix = suffix.ljust(4, '0')
@@ -46,18 +44,8 @@ def load_data():
 
         # [과장님 요청] Biomaterial 제품군 수동 추가
         new_items = [
-            {
-                '제품군 대그룹 (Product Group)': 'Biomaterial',
-                '주문코드': '075.101w',
-                '재질/표면처리': 'Emdogain 0.3ml',
-                '직경': '-', '길이': '-'
-            },
-            {
-                '제품군 대그룹 (Product Group)': 'Biomaterial',
-                '주문코드': '075.102w',
-                '재질/표면처리': 'Emdogain 0.7ml',
-                '직경': '-', '길이': '-'
-            }
+            {'제품군 대그룹 (Product Group)': 'Biomaterial', '주문코드': '075.101w', '재질/표면처리': 'Emdogain 0.3ml', '직경': '-', '길이': '-'},
+            {'제품군 대그룹 (Product Group)': 'Biomaterial', '주문코드': '075.102w', '재질/표면처리': 'Emdogain 0.7ml', '직경': '-', '길이': '-'}
         ]
         manual_df = pd.DataFrame(new_items)
         df = pd.concat([df, manual_df], ignore_index=True)
@@ -66,12 +54,13 @@ def load_data():
     except Exception as e:
         return None, str(e)
 
-# --- 3. 담당자 및 파라미터 판별 ---
+# --- 3. URL 파라미터 안전 조회 ---
 def get_param(key, default):
     try:
         val = st.query_params.get(key, default)
         return val[0] if isinstance(val, list) else val
-    except: return default
+    except:
+        return default
 
 rep_key = get_param("rep", "lee")
 url_cust = get_param("cust", "")
@@ -82,23 +71,21 @@ if 'cart' not in st.session_state: st.session_state['cart'] = {}
 df, load_msg = load_data()
 if df is None: st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
 
-# --- 4. 최종 확인 팝업창 ---
+# --- 4. 최종 확인 팝업창 (9:41 PM + 딸깍 복붙) ---
 @st.dialog("📋 주문 내용을 확인해 주세요")
 def confirm_order_dialog(cust_name, mgr_name):
     st.write("입력하신 품목과 수량이 맞습니까?")
     st.divider()
     
     is_exchange = st.checkbox("🔄 교환 주문인가요?")
-    st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다. Biomaterial은 교환 불가제품입니다.")
+    st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다.")
     
     st.divider()
     for item in st.session_state['cart'].values():
-        # 팝업창에서도 직관적인 이름을 먼저 보여줍니다.
         st.write(f"• **{item['display_name']}** : **{item['q']}개**")
     
     st.divider()
     if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
-        # 과장님 텔레그램 전송용 리스트 (코드 중심)
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
         action_text = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
         
@@ -116,7 +103,7 @@ def confirm_order_dialog(cust_name, mgr_name):
             st.session_state['cart'] = {}; st.rerun()
         else: st.error(f"실패: {res}")
 
-# --- 5. 메인 UI ---
+# --- 5. 메인 UI 및 사이드바 ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
 st.sidebar.header("🏢 주문 정보 입력")
@@ -128,8 +115,8 @@ c_group_col = '제품군 대그룹 (Product Group)'
 cat = st.sidebar.selectbox("제품군", ["전체"] + sorted(df[c_group_col].unique()))
 mat = st.sidebar.selectbox("재질", ["전체"] + sorted(df['재질/표면처리'].unique()))
 
-# 사이드바 장바구니
 st.sidebar.divider()
+st.sidebar.subheader("🛒 실시간 장바구니")
 if st.session_state['cart']:
     summary = [f"• {v['display_name'][:10]}.. / {v['q']}개" for v in st.session_state['cart'].values()]
     st.sidebar.info("\n".join(summary))
@@ -142,7 +129,7 @@ if st.session_state['cart']:
 else:
     st.sidebar.warning("🛒 수량을 입력하세요.")
 
-# --- 6. 카드 목록 출력 ---
+# --- 6. 제품 리스트 출력 ---
 f_df = df.copy()
 if cat != "전체": f_df = f_df[f_df[c_group_col] == cat]
 if mat != "전체": f_df = f_df[f_df['재질/표면처리'] == mat]
@@ -168,7 +155,8 @@ for idx, row in f_df.iterrows():
         if q > 0:
             st.session_state['cart'][item_key] = {
                 'c': row['주문코드'], 'q': q, 
-                'display_name': display_title + (f" ({row['직경']}x{row['길이']})" if not is_biomaterial else "")
+                'display_name': display_title + (f" ({row['직경']}x{row['길이']})" if not is_biomaterial else ""),
+                'g': row[c_group_col], 'sz': row['직경'], 'ln': row['길이'], 'm': row['재질/표면처리']
             }
         else:
             st.session_state['cart'].pop(item_key, None)
