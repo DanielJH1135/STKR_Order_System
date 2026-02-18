@@ -7,8 +7,7 @@ import re
 # --- [규칙 1] 반드시 최상단 설정 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
-# --- [신규] 최상단 회사 로고 송출 ---
-# 깃허브에 logo.png 또는 logo.jpg 파일을 올리시면 여기에 자동으로 뜹니다.
+# --- 최상단 회사 로고 송출 ---
 if os.path.exists("logo.png"):
     st.image("logo.png", width=250)
 elif os.path.exists("logo.jpg"):
@@ -49,30 +48,25 @@ def load_data():
     try:
         df = pd.read_excel(file_path, dtype=str)
         df = df.fillna("").apply(lambda x: x.str.strip())
-
-        # Biomaterial 제품군 수동 추가
         new_items = [
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '주문코드': '075.101w', '재질/표면처리': 'Emdogain 0.3ml', '직경': '-', '길이': '-'},
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '주문코드': '075.102w', '재질/표면처리': 'Emdogain 0.7ml', '직경': '-', '길이': '-'}
         ]
-        manual_df = pd.DataFrame(new_items)
-        df = pd.concat([df, manual_df], ignore_index=True)
+        df = pd.concat([df, pd.DataFrame(new_items)], ignore_index=True)
         df['주문코드'] = df['주문코드'].apply(format_order_code)
         return df, "성공"
     except Exception as e:
         return None, str(e)
 
 # --- 3. URL 파라미터 및 상태 관리 ---
-def get_param(key, default):
-    try:
-        val = st.query_params.get(key, default)
-        return val[0] if isinstance(val, list) else val
-    except:
-        return default
+try:
+    rep_key = st.query_params.get("rep", "lee")
+    url_cust = st.query_params.get("cust", "")
+except:
+    rep_key = "lee"
+    url_cust = ""
 
-rep_key = get_param("rep", "lee")
-url_cust = get_param("cust", "")
-current_rep = SALES_REPS.get(rep_key, SALES_REPS["lee"])
+current_rep = SALES_REPS.get(str(rep_key).lower(), SALES_REPS["lee"])
 
 if 'selected_cat' not in st.session_state: st.session_state.selected_cat = "전체"
 if 'cart' not in st.session_state: st.session_state['cart'] = {}
@@ -84,60 +78,45 @@ if df is None: st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
 @st.dialog("📋 주문 내용을 확인해 주세요")
 def confirm_order_dialog(cust_name, mgr_name):
     st.write("입력하신 품목과 수량이 맞습니까?")
-    st.divider()
-    
     is_exchange = st.checkbox("🔄 교환 주문인가요?")
-    st.markdown("교환 보내실 제품은 **유효기간 1년 이상** 남은 제품만 가능합니다.")
-    
     st.divider()
     for item in st.session_state['cart'].values():
         st.write(f"• **{item['display_name']}** : **{item['q']}개**")
-    
-    st.divider()
     if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
-        action_text = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
-        
-        full_msg = (
-            f"🔔 [{current_rep['name']}] 주문접수\n"
-            f"🏢 {cust_name}\n"
-            f"👤 {mgr_name}\n\n"
-            f"{order_list}\n\n"
-            f"{cust_name} {action_text}"
-        )
-        
-        ok, res = send_telegram(full_msg, current_rep['id'])
-        if ok:
+        action = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
+        msg = f"🔔 [{current_rep['name']}] 주문접수\n🏢 {cust_name}\n👤 {mgr_name}\n\n{order_list}\n\n{cust_name} {action}"
+        if send_telegram(msg, current_rep['id'])[0]:
             st.success("전송 완료!"); st.balloons()
             st.session_state['cart'] = {}; st.rerun()
-        else: st.error(f"실패: {res}")
+        else: st.error("전송 실패")
 
-# --- 5. 메인 UI 및 사이드바 ---
+# --- 5. 메인 UI (버튼 배열 수정) ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
-# [신규] 요청하신 2줄 배열 카드형 버튼
 st.write("### 📂 시스템 선택")
 
-# 첫 번째 줄 (BL, BLT, TL)
-row1_cats = ["BL", "BLT", "TL"]
-cols1 = st.columns(3)
-for i, cat in enumerate(row1_cats):
-    with cols1[i]:
-        if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
-            st.session_state.selected_cat = cat
+# [요청사항] 1열: BL, BLT, TL / 2열: BLX, TLX, Biomaterial
+row1 = ["BL", "BLT", "TL"]
+row2 = ["BLX", "TLX", "Biomaterial"]
 
-# 두 번째 줄 (BLX, TLX, Biomaterial)
-row2_cats = ["BLX", "TLX", "Biomaterial"]
-cols2 = st.columns(3)
-for i, cat in enumerate(row2_cats):
-    with cols2[i]:
-        if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
+c1 = st.columns(3)
+for i, cat in enumerate(row1):
+    with c1[i]:
+        # 클릭 시 st.rerun()을 추가하여 즉시 빨간 박스가 이동하게 함
+        if st.button(cat, use_container_width=True, key=f"btn_{cat}", type="primary" if st.session_state.selected_cat == cat else "secondary"):
             st.session_state.selected_cat = cat
+            st.rerun()
+
+c2 = st.columns(3)
+for i, cat in enumerate(row2):
+    with c2[i]:
+        if st.button(cat, use_container_width=True, key=f"btn_{cat}", type="primary" if st.session_state.selected_cat == cat else "secondary"):
+            st.session_state.selected_cat = cat
+            st.rerun()
 
 if st.button("🔄 전체 초기화 / 모두 보기", use_container_width=True):
-    st.session_state.selected_cat = "전체"
-    st.session_state['cart'] = {}
-    st.rerun()
+    st.session_state.selected_cat = "전체"; st.session_state['cart'] = {}; st.rerun()
 
 st.divider()
 
@@ -146,58 +125,39 @@ st.sidebar.header("🏢 주문 정보 입력")
 cust_name_input = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_name_input = st.sidebar.text_input("담당자명 (필수)")
 
-st.sidebar.divider()
-st.sidebar.subheader("🛒 실시간 장바구니")
 if st.session_state['cart']:
-    summary = [f"• {v['display_name'][:10]}.. / {v['q']}개" for v in st.session_state['cart'].values()]
-    st.sidebar.info("\n".join(summary))
-    if st.sidebar.button(f"🚀 주문 전송하기", use_container_width=True, type="primary"):
-        if not cust_name_input or not mgr_name_input:
-            st.sidebar.error("⚠️ 업체명과 담당자명을 입력하세요!")
+    st.sidebar.divider()
+    st.sidebar.subheader("🛒 실시간 장바구니")
+    for v in st.session_state['cart'].values():
+        st.sidebar.caption(f"• {v['display_name'][:10]}.. / {v['q']}개")
+    if st.sidebar.button("🚀 주문 전송하기", use_container_width=True, type="primary"):
+        if not cust_name_input or not mgr_name_input: st.sidebar.error("정보를 입력하세요!")
         else: confirm_order_dialog(cust_name_input, mgr_name_input)
-    if st.sidebar.button("🗑️ 전체 삭제", use_container_width=True):
-        st.session_state['cart'] = {}; st.rerun()
-else:
-    st.sidebar.warning("🛒 수량을 입력하세요.")
 
-# --- 6. 제품 리스트 필터링 및 출력 ---
+# --- 6. 제품 리스트 필터링 (스마트 매칭) ---
 c_group_col = '제품군 대그룹 (Product Group)'
 f_df = df.copy()
 
-# [핵심 보완] 어떤 엑셀 이름이든 찰떡같이 찾아내는 스마트 필터
 def is_exact_match(val, target):
-    val = str(val).upper()
-    target = target.upper()
-    if val.strip() == target:
-        return True
-    # "BL (Bone Level)" 등 괄호나 공백이 섞여 있어도 BL만 딱 잡아냅니다 (BLX와 혼동 방지)
+    val, target = str(val).upper(), target.upper()
+    if val.strip() == target: return True
+    # BLX가 BL에 포함되지 않도록 하는 정규식 매칭
     pattern = rf'(?:^|[^A-Z0-9]){target}(?:[^A-Z0-9]|$)'
-    if re.search(pattern, val):
-        return True
-    return False
+    return bool(re.search(pattern, val))
 
 if st.session_state.selected_cat != "전체":
-    target = st.session_state.selected_cat
-    f_df = f_df[f_df[c_group_col].apply(lambda x: is_exact_match(x, target))]
+    f_df = f_df[f_df[c_group_col].apply(lambda x: is_exact_match(x, st.session_state.selected_cat))]
 
 st.write(f"현재 선택: **{st.session_state.selected_cat}** ({len(f_df)}건)")
 
-if len(f_df) == 0:
-    st.info("해당 시스템의 품목이 없습니다.")
-
 for idx, row in f_df.iterrows():
     item_key = f"row_{idx}"
-    is_biomaterial = row[c_group_col] == 'Biomaterial'
-    
+    is_bio = row[c_group_col] == 'Biomaterial'
     with st.container(border=True):
-        display_title = row['재질/표면처리'] if is_biomaterial else row[c_group_col]
-        st.markdown(f"### {display_title}")
+        title = row['재질/표면처리'] if is_bio else row[c_group_col]
+        st.markdown(f"### {title}")
         st.code(row['주문코드'])
-        
-        if is_biomaterial:
-            st.caption(f"📍 분류: {row[c_group_col]}")
-        else:
-            st.caption(f"📍 규격: {row['직경']} x {row['길이']} | {row['재질/표면처리']}")
+        st.caption(f"📍 {row['직경']} x {row['길이']} | {row['재질/표면처리']}" if not is_bio else "📍 Biomaterial")
         
         prev_q = st.session_state['cart'].get(item_key, {}).get('q', 0)
         q = st.number_input("주문 수량(개)", 0, 1000, key=f"qty_{idx}", value=int(prev_q))
@@ -205,8 +165,6 @@ for idx, row in f_df.iterrows():
         if q > 0:
             st.session_state['cart'][item_key] = {
                 'c': row['주문코드'], 'q': q, 
-                'display_name': display_title + (f" ({row['직경']}x{row['길이']})" if not is_biomaterial else ""),
-                'g': row[c_group_col], 'sz': row['직경'], 'ln': row['길이'], 'm': row['재질/표면처리']
+                'display_name': title + (f" ({row['직경']}x{row['길이']})" if not is_bio else "")
             }
-        else:
-            st.session_state['cart'].pop(item_key, None)
+        else: st.session_state['cart'].pop(item_key, None)
