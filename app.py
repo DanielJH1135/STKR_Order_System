@@ -2,9 +2,17 @@ import streamlit as st
 import pandas as pd
 import requests
 import os
+import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
+
+# --- [신규] 최상단 회사 로고 송출 ---
+# 깃허브에 logo.png 또는 logo.jpg 파일을 올리시면 여기에 자동으로 뜹니다.
+if os.path.exists("logo.png"):
+    st.image("logo.png", width=250)
+elif os.path.exists("logo.jpg"):
+    st.image("logo.jpg", width=250)
 
 # --- 1. 담당자 및 텔레그램 설정 ---
 SALES_REPS = {
@@ -22,7 +30,7 @@ def send_telegram(msg, chat_id):
     except Exception as e:
         return False, str(e)
 
-# --- 2. 데이터 보정 및 로드 (가장 안정적인 기존 로직) ---
+# --- 2. 데이터 보정 및 로드 ---
 def format_order_code(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
@@ -66,14 +74,13 @@ rep_key = get_param("rep", "lee")
 url_cust = get_param("cust", "")
 current_rep = SALES_REPS.get(rep_key, SALES_REPS["lee"])
 
-# [신규] 카테고리 상태 관리 추가
 if 'selected_cat' not in st.session_state: st.session_state.selected_cat = "전체"
 if 'cart' not in st.session_state: st.session_state['cart'] = {}
 
 df, load_msg = load_data()
 if df is None: st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
 
-# --- 4. 최종 확인 팝업창 (9:41 PM 형식 유지) ---
+# --- 4. 최종 확인 팝업창 ---
 @st.dialog("📋 주문 내용을 확인해 주세요")
 def confirm_order_dialog(cust_name, mgr_name):
     st.write("입력하신 품목과 수량이 맞습니까?")
@@ -105,16 +112,25 @@ def confirm_order_dialog(cust_name, mgr_name):
             st.session_state['cart'] = {}; st.rerun()
         else: st.error(f"실패: {res}")
 
-# --- 5. 메인 UI (사이드바 + 상단 카테고리 버튼) ---
+# --- 5. 메인 UI 및 사이드바 ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
-# [신규] 메인 화면 상단 카드형 버튼 모음
+# [신규] 요청하신 2줄 배열 카드형 버튼
 st.write("### 📂 시스템 선택")
-main_cats = ["BL", "TL", "BLX", "TLX", "Biomaterial"]
-cols = st.columns(3)
-for i, cat in enumerate(main_cats):
-    with cols[i % 3]:
-        # 선택된 카테고리는 색상이 강조(primary) 됩니다.
+
+# 첫 번째 줄 (BL, BLT, TL)
+row1_cats = ["BL", "BLT", "TL"]
+cols1 = st.columns(3)
+for i, cat in enumerate(row1_cats):
+    with cols1[i]:
+        if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
+            st.session_state.selected_cat = cat
+
+# 두 번째 줄 (BLX, TLX, Biomaterial)
+row2_cats = ["BLX", "TLX", "Biomaterial"]
+cols2 = st.columns(3)
+for i, cat in enumerate(row2_cats):
+    with cols2[i]:
         if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
             st.session_state.selected_cat = cat
 
@@ -125,7 +141,7 @@ if st.button("🔄 전체 초기화 / 모두 보기", use_container_width=True):
 
 st.divider()
 
-# 사이드바 주문 정보
+# 사이드바
 st.sidebar.header("🏢 주문 정보 입력")
 cust_name_input = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_name_input = st.sidebar.text_input("담당자명 (필수)")
@@ -148,22 +164,32 @@ else:
 c_group_col = '제품군 대그룹 (Product Group)'
 f_df = df.copy()
 
-# [신규] 버튼 클릭 상태에 따른 필터링 (BL과 BLX가 혼동되지 않도록 정확히 일치하는지 확인)
+# [핵심 보완] 어떤 엑셀 이름이든 찰떡같이 찾아내는 스마트 필터
+def is_exact_match(val, target):
+    val = str(val).upper()
+    target = target.upper()
+    if val.strip() == target:
+        return True
+    # "BL (Bone Level)" 등 괄호나 공백이 섞여 있어도 BL만 딱 잡아냅니다 (BLX와 혼동 방지)
+    pattern = rf'(?:^|[^A-Z0-9]){target}(?:[^A-Z0-9]|$)'
+    if re.search(pattern, val):
+        return True
+    return False
+
 if st.session_state.selected_cat != "전체":
     target = st.session_state.selected_cat
-    if target in ["BL", "TL"]:
-        f_df = f_df[f_df[c_group_col].str.strip() == target]
-    else:
-        f_df = f_df[f_df[c_group_col].str.contains(target, na=False)]
+    f_df = f_df[f_df[c_group_col].apply(lambda x: is_exact_match(x, target))]
 
 st.write(f"현재 선택: **{st.session_state.selected_cat}** ({len(f_df)}건)")
+
+if len(f_df) == 0:
+    st.info("해당 시스템의 품목이 없습니다.")
 
 for idx, row in f_df.iterrows():
     item_key = f"row_{idx}"
     is_biomaterial = row[c_group_col] == 'Biomaterial'
     
     with st.container(border=True):
-        # Biomaterial은 제품명을 제목으로 표시
         display_title = row['재질/표면처리'] if is_biomaterial else row[c_group_col]
         st.markdown(f"### {display_title}")
         st.code(row['주문코드'])
