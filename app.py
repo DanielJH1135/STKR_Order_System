@@ -7,7 +7,7 @@ import re
 # --- [규칙 1] 반드시 최상단 설정 ---
 st.set_page_config(page_title="주문 시스템", layout="centered")
 
-# --- 최상단 회사 로고 송출 ---
+# --- 최상단 회사 로고 송출 (logo.png 또는 logo.jpg) ---
 if os.path.exists("logo.png"):
     st.image("logo.png", width=250)
 elif os.path.exists("logo.jpg"):
@@ -74,36 +74,51 @@ if 'cart' not in st.session_state: st.session_state['cart'] = {}
 df, load_msg = load_data()
 if df is None: st.error(f"데이터 로드 실패: {load_msg}"); st.stop()
 
-# --- 4. 최종 확인 팝업창 ---
+# --- 4. 최종 확인 팝업창 (안내 문구 보강) ---
 @st.dialog("📋 주문 내용을 확인해 주세요")
 def confirm_order_dialog(cust_name, mgr_name):
     st.write("입력하신 품목과 수량이 맞습니까?")
+    st.divider()
+    
     is_exchange = st.checkbox("🔄 교환 주문인가요?")
+    # [복구 완료] 교환 시 주의사항 문구
+    st.markdown(":red[**※ 교환 보내실 제품은 유효기간 1년 이상 남은 제품만 가능합니다.**]")
+    
     st.divider()
     for item in st.session_state['cart'].values():
         st.write(f"• **{item['display_name']}** : **{item['q']}개**")
+    
+    st.divider()
     if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
-        action = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
-        msg = f"🔔 [{current_rep['name']}] 주문접수\n🏢 {cust_name}\n👤 {mgr_name}\n\n{order_list}\n\n{cust_name} {action}"
-        if send_telegram(msg, current_rep['id'])[0]:
+        action_text = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
+        
+        full_msg = (
+            f"🔔 [{current_rep['name']}] 주문접수\n"
+            f"🏢 {cust_name}\n"
+            f"👤 {mgr_name}\n\n"
+            f"{order_list}\n\n"
+            f"{cust_name} {action_text}"
+        )
+        
+        ok, res = send_telegram(full_msg, current_rep['id'])
+        if ok:
             st.success("전송 완료!"); st.balloons()
             st.session_state['cart'] = {}; st.rerun()
-        else: st.error("전송 실패")
+        else: st.error(f"실패: {res}")
 
-# --- 5. 메인 UI (버튼 배열 수정) ---
+# --- 5. 메인 UI (버튼 배열 및 로직) ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
 st.write("### 📂 시스템 선택")
 
-# [요청사항] 1열: BL, BLT, TL / 2열: BLX, TLX, Biomaterial
+# 버튼 배치 (BL, BLT, TL / BLX, TLX, Biomaterial)
 row1 = ["BL", "BLT", "TL"]
 row2 = ["BLX", "TLX", "Biomaterial"]
 
 c1 = st.columns(3)
 for i, cat in enumerate(row1):
     with c1[i]:
-        # 클릭 시 st.rerun()을 추가하여 즉시 빨간 박스가 이동하게 함
         if st.button(cat, use_container_width=True, key=f"btn_{cat}", type="primary" if st.session_state.selected_cat == cat else "secondary"):
             st.session_state.selected_cat = cat
             st.rerun()
@@ -134,14 +149,13 @@ if st.session_state['cart']:
         if not cust_name_input or not mgr_name_input: st.sidebar.error("정보를 입력하세요!")
         else: confirm_order_dialog(cust_name_input, mgr_name_input)
 
-# --- 6. 제품 리스트 필터링 (스마트 매칭) ---
+# --- 6. 제품 리스트 필터링 ---
 c_group_col = '제품군 대그룹 (Product Group)'
 f_df = df.copy()
 
 def is_exact_match(val, target):
     val, target = str(val).upper(), target.upper()
     if val.strip() == target: return True
-    # BLX가 BL에 포함되지 않도록 하는 정규식 매칭
     pattern = rf'(?:^|[^A-Z0-9]){target}(?:[^A-Z0-9]|$)'
     return bool(re.search(pattern, val))
 
