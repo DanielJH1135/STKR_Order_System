@@ -5,7 +5,7 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v5.0", layout="centered")
+st.set_page_config(page_title="주문 시스템 v5.1", layout="centered")
 
 # --- 0. 담당자 및 URL 파라미터 ---
 SALES_REPS = {
@@ -37,7 +37,6 @@ def format_code_final(c):
     if not c or c.lower() == "nan": return ""
     if "." in c:
         parts = c.split(".")
-        # 앞자리를 3자리로 강제 고정 (예: 21. -> 021.)
         prefix = parts[0].zfill(3) if parts[0].isdigit() else parts[0]
         return f"{prefix}.{parts[1]}"
     return c.zfill(3) if c.isdigit() else c
@@ -47,11 +46,11 @@ def load_data():
     file_path = "order_database.xlsx"
     try:
         df = pd.read_excel(file_path, dtype=str)
-        df.columns = [c.strip() for c in df.columns] # 컬럼명 공백 제거
+        df.columns = [c.strip() for c in df.columns]
         df = df.fillna("").apply(lambda x: x.str.strip())
         df['주문코드'] = df['주문코드'].apply(format_code_final)
         
-        # Biomaterial 추가
+        # Biomaterial 수동 추가
         bio = [
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.3ml', '주문코드': '075.101w', '직경': '-', '길이': '-', '구분': ''},
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.7ml', '주문코드': '075.102w', '직경': '-', '길이': '-', '구분': ''}
@@ -92,7 +91,7 @@ if st.session_state.selected_cat not in ["전체", "Biomaterial"]:
                 st.session_state.selected_mat, st.session_state.selected_spec = m, "전체"
                 st.rerun()
 
-# [STEP 3] 상세 규격 (과장님 요청 100% 반영)
+# [STEP 3] 상세 규격
 if st.session_state.selected_mat != "전체":
     st.write("### 3️⃣ 상세 규격 선택")
     cur = st.session_state.selected_cat
@@ -101,7 +100,6 @@ if st.session_state.selected_mat != "전체":
     elif cur == "BLT": specs = ["2.9", "3.3", "4.1", "4.8"]
     elif cur in ["TL", "TLX"]: specs = ["S", "SP"]
     elif cur == "BLX":
-        # BLX는 엑셀에서 실제 직경 목록을 가져와서 정렬 (3.5 ~ 6.5 자동 반영)
         blx_data = df[df['제품군 대그룹 (Product Group)'].str.contains("BLX", na=False)]
         specs = sorted(blx_data['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
     else: specs = []
@@ -121,18 +119,24 @@ if st.button("🔄 검색 조건 초기화", use_container_width=True):
 
 st.divider()
 
-# --- 4. 데이터 필터링 로직 (무적 필터) ---
+# --- 4. 데이터 필터링 로직 (BL/BLT/BLX 격리 성공) ---
 f_df = df.copy()
 
-# 1) 시스템 필터 (BL, BLT, BLX 완전 분리)
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
-    if c == "BL": # BLT, BLX 제외하고 오직 BL만
-        f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.fullmatch("BL", case=False) | f_df['제품군 대그룹 (Product Group)'].str.startswith("BL ", na=False)]
+    if c == "BL":
+        # BL로 시작하되, 바로 뒤에 T나 X가 오지 않는 것들 (BL-NC, BL-RC 등 포함)
+        f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.startswith("BL", na=False) & 
+                    ~f_df['제품군 대그룹 (Product Group)'].str.startswith("BLT", na=False) & 
+                    ~f_df['제품군 대그룹 (Product Group)'].str.startswith("BLX", na=False)]
+    elif c == "TL":
+        # TL로 시작하되, 바로 뒤에 X가 오지 않는 것들 (TL-S 등 포함)
+        f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.startswith("TL", na=False) & 
+                    ~f_df['제품군 대그룹 (Product Group)'].str.startswith("TLX", na=False)]
     else:
         f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(c, na=False)]
 
-# 2) 재질 필터
+# 재질 및 규격 필터 (기존 로직 유지)
 if st.session_state.selected_mat != "전체":
     mt = st.session_state.selected_mat
     if mt == "Ti-SLA":
@@ -142,30 +146,18 @@ if st.session_state.selected_mat != "전체":
     elif mt == "Roxolid SLActive":
         f_df = f_df[f_df['재질/표면처리'].str.contains("SLActive", na=False)]
 
-# 3) 규격 필터 (S/SP 필터 강화)
 if st.session_state.selected_spec != "전체":
     sp = st.session_state.selected_spec
     if st.session_state.selected_cat in ["TL", "TLX"]:
-        # [핵심] '구분'이라는 글자가 들어간 모든 열을 찾아서 필터링
         gubun_col = [c for c in f_df.columns if "구분" in c]
-        if gubun_col:
-            f_df = f_df[f_df[gubun_col[0]] == sp]
-        else:
-            # 혹시나 '구분' 열이 없을 때를 대비한 백업 (이름에서 찾기)
-            f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(f"-{sp}", na=False)]
+        if gubun_col: f_df = f_df[f_df[gubun_col[0]] == sp]
     else:
         f_df = f_df[f_df['직경'] == sp]
 
-# --- 5. 사이드바 및 출력 ---
+# --- 5. 출력 ---
 st.sidebar.header("🏢 주문자 정보")
 cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_in = st.sidebar.text_input("담당자명 (필수)")
-
-if st.session_state['cart']:
-    st.sidebar.divider()
-    st.sidebar.subheader(f"🛒 담은 품목 ({len(st.session_state['cart'])}건)")
-    for v in st.session_state['cart'].values():
-        st.sidebar.caption(f"• {v['display_name']} / {v['q']}개")
 
 st.write(f"🔍 검색 결과: **{len(f_df)}건**")
 for idx, row in f_df.iterrows():
@@ -174,6 +166,4 @@ for idx, row in f_df.iterrows():
         st.code(row['주문코드'])
         st.caption(f"📍 {row['직경']} x {row['길이']}")
         q = st.number_input("수량", 0, 100, key=f"q_{idx}")
-        # 카트 업데이트
         if q > 0: st.session_state['cart'][f"row_{idx}"] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
-        else: st.session_state['cart'].pop(f"row_{idx}", None)
