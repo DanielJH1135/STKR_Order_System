@@ -5,7 +5,7 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v5.2", layout="centered")
+st.set_page_config(page_title="주문 시스템 v5.3", layout="centered")
 
 # --- 0. 담당자 및 URL 파라미터 ---
 SALES_REPS = {
@@ -31,7 +31,7 @@ with col_c:
     img = "logo.png" if os.path.exists("logo.png") else "logo.jpg"
     if os.path.exists(img): st.image(img, use_container_width=True)
 
-# --- 1. 데이터 로드 및 포맷 ---
+# --- 1. 데이터 로드 및 021.xxxx 유지 ---
 def format_code_final(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
@@ -61,7 +61,6 @@ df, _ = load_data()
 
 # --- 2. 텔레그램 전송 함수 ---
 TOKEN = "7990356470:AAFeLyeK-8V4Misqb0SDutxa6zpYx_abnGw"
-
 def send_telegram(msg, chat_id):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
     try:
@@ -69,48 +68,42 @@ def send_telegram(msg, chat_id):
         return res.status_code == 200, res.text
     except Exception as e: return False, str(e)
 
-# --- 3. [복구] 최종 확인 팝업창 (교환안내 포함) ---
-@st.dialog("📋 주문 내역을 확인해 주세요")
+# --- 3. 주문 확인 다이얼로그 ---
+@st.dialog("📋 주문 내역을 최종 확인합니다")
 def confirm_order_dialog(cust_name, mgr_name):
-    st.write("입력하신 품목과 수량이 맞습니까?")
+    st.write(f"🏢 **거래처**: {cust_name}")
+    st.write(f"👤 **담당자**: {mgr_name}")
     st.divider()
     
-    is_exchange = st.checkbox("🔄 교환 주문인가요?")
-    # [요청사항] 교환 안내 문구 (볼드, 레드)
+    is_exchange = st.checkbox("🔄 교환 주문인가요? (선납 처리)")
+    # [강조 문구] 빨간색 + 볼드
     st.markdown(":red[**※ 교환 보내실 제품은 유효기간 1년이상 남은 제품만 가능합니다.**]")
     
     st.divider()
     for item in st.session_state['cart'].values():
-        st.write(f"• **{item['display_name']}** : **{item['q']}개**")
+        st.write(f"• **{item['display_name']}** : {item['q']}개")
     
     st.divider()
-    if st.button("✅ 네, 이대로 주문합니다", use_container_width=True, type="primary"):
+    if st.button("✅ 주문 확정 및 전송", use_container_width=True, type="primary"):
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
-        action_text = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
+        action = "선납주문 부탁드립니다." if is_exchange else "주문부탁드립니다."
+        msg = f"🔔 [{current_rep['name']}] 주문접수\n🏢 {cust_name}\n👤 {mgr_name}\n\n{order_list}\n\n{cust_name} {action}"
         
-        full_msg = (
-            f"🔔 [{current_rep['name']}] 주문접수\n"
-            f"🏢 {cust_name}\n"
-            f"👤 {mgr_name}\n\n"
-            f"{order_list}\n\n"
-            f"{cust_name} {action_text}"
-        )
-        
-        ok, res = send_telegram(full_msg, current_rep['id'])
+        ok, res = send_telegram(msg, current_rep['id'])
         if ok:
-            st.success("전송 완료!"); st.balloons()
+            st.success("주문이 성공적으로 전송되었습니다!"); st.balloons()
             st.session_state['cart'] = {}; st.rerun()
-        else: st.error(f"실패: {res}")
+        else: st.error("전송 실패. 네트워크를 확인하세요.")
 
-# --- 4. 상태 관리 ---
+# --- 4. 상태 관리 및 UI ---
 if 'selected_cat' not in st.session_state: st.session_state.selected_cat = "전체"
 if 'selected_mat' not in st.session_state: st.session_state.selected_mat = "전체"
 if 'selected_spec' not in st.session_state: st.session_state.selected_spec = "전체"
 if 'cart' not in st.session_state: st.session_state['cart'] = {}
 
-# --- 5. 메인 UI 및 필터 버튼 (v5.1 유지) ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
+# [필터링 UI] (v5.1 로직 유지)
 st.write("### 1️⃣ 시스템 선택")
 r1, r2 = ["BL", "BLT", "TL"], ["BLX", "TLX", "Biomaterial"]
 c_rows = [st.columns(3), st.columns(3)]
@@ -123,10 +116,10 @@ for idx, row_cats in enumerate([r1, r2]):
 
 if st.session_state.selected_cat not in ["전체", "Biomaterial"]:
     st.write("### 2️⃣ 재질/표면처리")
+    m_cols = st.columns(3)
     mats = ["Ti-SLA", "Roxolid SLA", "Roxolid SLActive"]
-    c3 = st.columns(3)
     for i, m in enumerate(mats):
-        with c3[i]:
+        with m_cols[i]:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.selected_mat == m else "secondary"):
                 st.session_state.selected_mat, st.session_state.selected_spec = m, "전체"
                 st.rerun()
@@ -157,31 +150,12 @@ if st.button("🔄 검색 조건 초기화", use_container_width=True):
 
 st.divider()
 
-# --- 6. [복구] 사이드바 (정보입력 + 장바구니 + 전송버튼) ---
-st.sidebar.header("🏢 주문 정보 입력")
+# --- 5. 사이드바 (기존 유지) ---
+st.sidebar.header("🏢 주문 정보")
 cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_in = st.sidebar.text_input("담당자명 (필수)")
 
-if st.session_state['cart']:
-    st.sidebar.divider()
-    st.sidebar.subheader(f"🛒 실시간 장바구니 ({len(st.session_state['cart'])}건)")
-    for v in st.session_state['cart'].values():
-        st.sidebar.caption(f"• {v['display_name']} / {v['q']}개")
-    
-    st.sidebar.divider()
-    # [복구] 전송 버튼
-    if st.sidebar.button("🚀 주문 전송하기", use_container_width=True, type="primary"):
-        if not cust_in or not mgr_in:
-            st.sidebar.error("거래처명과 담당자명을 입력하세요!")
-        else:
-            confirm_order_dialog(cust_in, mgr_in)
-    
-    if st.sidebar.button("🗑️ 장바구니 비우기", use_container_width=True):
-        st.session_state['cart'] = {}; st.rerun()
-else:
-    st.sidebar.info("🛒 수량을 입력하여 제품을 담아주세요.")
-
-# --- 7. 데이터 필터링 로직 (v5.1 유지) ---
+# --- 6. 데이터 필터링 로직 ---
 f_df = df.copy()
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
@@ -212,13 +186,33 @@ if st.session_state.selected_spec != "전체":
     else:
         f_df = f_df[f_df['직경'] == sp]
 
-# --- 8. 리스트 출력 ---
+# --- 7. 리스트 출력 및 장바구니 연동 ---
 st.write(f"🔍 검색 결과: **{len(f_df)}건**")
+
 for idx, row in f_df.iterrows():
     with st.container(border=True):
         st.write(f"**{row['제품군 대그룹 (Product Group)']} - {row['재질/표면처리']}**")
         st.code(row['주문코드'])
         st.caption(f"📍 {row['직경']} x {row['길이']}")
-        q = st.number_input("수량", 0, 100, key=f"q_{idx}")
-        if q > 0: st.session_state['cart'][f"row_{idx}"] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
-        else: st.session_state['cart'].pop(f"row_{idx}", None)
+        
+        item_key = f"row_{idx}"
+        prev_val = st.session_state['cart'].get(item_key, {}).get('q', 0)
+        
+        q = st.number_input("주문 수량", 0, 100, key=f"q_{idx}", value=int(prev_val))
+        if q > 0:
+            st.session_state['cart'][item_key] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
+        else:
+            st.session_state['cart'].pop(item_key, None)
+
+# --- 8. [신규] 메인 화면 하단 고정형 주문 요약 및 전송 버튼 ---
+if st.session_state['cart']:
+    st.divider()
+    st.subheader("🛒 주문 요약")
+    for v in st.session_state['cart'].values():
+        st.write(f"• {v['display_name']} / **{v['q']}개**")
+    
+    if st.button("🚀 주문 전송하기 (클릭)", use_container_width=True, type="primary"):
+        if not cust_in or not mgr_in:
+            st.error("거래처명과 담당자명을 입력해주세요! (좌측 사이드바)")
+        else:
+            confirm_order_dialog(cust_in, mgr_in)
