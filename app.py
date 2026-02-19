@@ -5,7 +5,7 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v4.5", layout="centered")
+st.set_page_config(page_title="주문 시스템 v5.0", layout="centered")
 
 # --- 0. 담당자 및 URL 파라미터 ---
 SALES_REPS = {
@@ -31,12 +31,13 @@ with col_c:
     img = "logo.png" if os.path.exists("logo.png") else "logo.jpg"
     if os.path.exists(img): st.image(img, use_container_width=True)
 
-# --- 1. 데이터 로드 및 021.xxxx 유지 로직 ---
+# --- 1. 데이터 로드 및 021.xxxx 유지 ---
 def format_code_final(c):
     c = str(c).strip()
     if not c or c.lower() == "nan": return ""
     if "." in c:
         parts = c.split(".")
+        # 앞자리를 3자리로 강제 고정 (예: 21. -> 021.)
         prefix = parts[0].zfill(3) if parts[0].isdigit() else parts[0]
         return f"{prefix}.{parts[1]}"
     return c.zfill(3) if c.isdigit() else c
@@ -45,14 +46,12 @@ def format_code_final(c):
 def load_data():
     file_path = "order_database.xlsx"
     try:
-        # dtype=str로 읽어 엑셀의 숫자 변환 방지
         df = pd.read_excel(file_path, dtype=str)
-        # 열 이름 공백 제거 (매우 중요)
-        df.columns = [c.strip() for c in df.columns]
+        df.columns = [c.strip() for c in df.columns] # 컬럼명 공백 제거
         df = df.fillna("").apply(lambda x: x.str.strip())
         df['주문코드'] = df['주문코드'].apply(format_code_final)
         
-        # Biomaterial 추가 (구분 열 포함)
+        # Biomaterial 추가
         bio = [
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.3ml', '주문코드': '075.101w', '직경': '-', '길이': '-', '구분': ''},
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.7ml', '주문코드': '075.102w', '직경': '-', '길이': '-', '구분': ''}
@@ -68,32 +67,27 @@ if 'selected_mat' not in st.session_state: st.session_state.selected_mat = "전�
 if 'selected_spec' not in st.session_state: st.session_state.selected_spec = "전체"
 if 'cart' not in st.session_state: st.session_state['cart'] = {}
 
-# --- 3. 메인 화면 ---
+# --- 3. 메인 UI ---
 st.title(f"🛒 {current_rep['name']} 주문채널")
 
 # [STEP 1] 시스템 선택
 st.write("### 1️⃣ 시스템 선택")
-row1, row2 = ["BL", "BLT", "TL"], ["BLX", "TLX", "Biomaterial"]
-c1 = st.columns(3)
-for i, cat in enumerate(row1):
-    with c1[i]:
-        if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
-            st.session_state.selected_cat, st.session_state.selected_mat, st.session_state.selected_spec = cat, "전체", "전체"
-            st.rerun()
-c2 = st.columns(3)
-for i, cat in enumerate(row2):
-    with c2[i]:
-        if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
-            st.session_state.selected_cat, st.session_state.selected_mat, st.session_state.selected_spec = cat, "전체", "전체"
-            st.rerun()
+r1, r2 = ["BL", "BLT", "TL"], ["BLX", "TLX", "Biomaterial"]
+c_rows = [st.columns(3), st.columns(3)]
+for idx, row_cats in enumerate([r1, r2]):
+    for i, cat in enumerate(row_cats):
+        with c_rows[idx][i]:
+            if st.button(cat, use_container_width=True, type="primary" if st.session_state.selected_cat == cat else "secondary"):
+                st.session_state.selected_cat, st.session_state.selected_mat, st.session_state.selected_spec = cat, "전체", "전체"
+                st.rerun()
 
 # [STEP 2] 재질 선택
 if st.session_state.selected_cat not in ["전체", "Biomaterial"]:
     st.write("### 2️⃣ 재질/표면처리")
-    m_cols = st.columns(3)
     mats = ["Ti-SLA", "Roxolid SLA", "Roxolid SLActive"]
+    c3 = st.columns(3)
     for i, m in enumerate(mats):
-        with m_cols[i]:
+        with c3[i]:
             if st.button(m, use_container_width=True, type="primary" if st.session_state.selected_mat == m else "secondary"):
                 st.session_state.selected_mat, st.session_state.selected_spec = m, "전체"
                 st.rerun()
@@ -103,23 +97,19 @@ if st.session_state.selected_mat != "전체":
     st.write("### 3️⃣ 상세 규격 선택")
     cur = st.session_state.selected_cat
     
-    if cur == "BL":
-        specs = ["3.3", "4.1", "4.8"] # 2.9 제외
-    elif cur == "BLT":
-        specs = ["2.9", "3.3", "4.1", "4.8"] # 2.9 포함
+    if cur == "BL": specs = ["3.3", "4.1", "4.8"]
+    elif cur == "BLT": specs = ["2.9", "3.3", "4.1", "4.8"]
+    elif cur in ["TL", "TLX"]: specs = ["S", "SP"]
     elif cur == "BLX":
-        # BLX는 엑셀에 있는 직경 수치를 동적으로 가져오되 3.5 이상만 정렬
-        blx_df = df[df['제품군 대그룹 (Product Group)'].str.contains("BLX", na=False)]
-        specs = sorted(blx_df['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
-    elif "TL" in cur:
-        specs = ["S", "SP"] # 구분 열 기반
+        # BLX는 엑셀에서 실제 직경 목록을 가져와서 정렬 (3.5 ~ 6.5 자동 반영)
+        blx_data = df[df['제품군 대그룹 (Product Group)'].str.contains("BLX", na=False)]
+        specs = sorted(blx_data['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
     else: specs = []
 
     if specs:
-        s_cols = st.columns(len(specs))
+        s_cols = st.columns(len(specs) if len(specs) <= 5 else 5)
         for i, s in enumerate(specs):
-            with s_cols[i]:
-                # 라벨 표시 보정
+            with s_cols[i % 5]:
                 label = f"S (2.8mm)" if s == "S" else (f"SP (1.8mm)" if s == "SP" else f"Ø {s}")
                 if st.button(label, use_container_width=True, type="primary" if st.session_state.selected_spec == s else "secondary"):
                     st.session_state.selected_spec = s
@@ -131,43 +121,45 @@ if st.button("🔄 검색 조건 초기화", use_container_width=True):
 
 st.divider()
 
-# --- 4. 데이터 필터링 로직 ---
+# --- 4. 데이터 필터링 로직 (무적 필터) ---
 f_df = df.copy()
 
-# 1) 시스템 필터 (BL, BLT, BLX 완전 격리)
+# 1) 시스템 필터 (BL, BLT, BLX 완전 분리)
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
-    if c == "BL":
-        # BL만 포함하고 T나 X가 뒤에 붙은 건 제외
-        f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(r'^BL[^TX]', regex=True, na=False) | (f_df['제품군 대그룹 (Product Group)'] == 'BL')]
+    if c == "BL": # BLT, BLX 제외하고 오직 BL만
+        f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.fullmatch("BL", case=False) | f_df['제품군 대그룹 (Product Group)'].str.startswith("BL ", na=False)]
     else:
         f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(c, na=False)]
 
 # 2) 재질 필터
 if st.session_state.selected_mat != "전체":
-    m_t = st.session_state.selected_mat
-    if m_t == "Ti-SLA":
+    mt = st.session_state.selected_mat
+    if mt == "Ti-SLA":
         f_df = f_df[~f_df['재질/표면처리'].str.contains("Roxolid", na=False) & f_df['재질/표면처리'].str.contains("SLA", na=False) & ~f_df['재질/표면처리'].str.contains("SLActive", na=False)]
-    elif m_t == "Roxolid SLA":
+    elif mt == "Roxolid SLA":
         f_df = f_df[f_df['재질/표면처리'].str.contains("Roxolid", na=False) & f_df['재질/표면처리'].str.contains("SLA", na=False) & ~f_df['재질/표면처리'].str.contains("SLActive", na=False)]
-    elif m_t == "Roxolid SLActive":
+    elif mt == "Roxolid SLActive":
         f_df = f_df[f_df['재질/표면처리'].str.contains("SLActive", na=False)]
 
-# 3) 규격 필터 (구분 열 최우선 적용)
+# 3) 규격 필터 (S/SP 필터 강화)
 if st.session_state.selected_spec != "전체":
-    spec = st.session_state.selected_spec
-    if "TL" in st.session_state.selected_cat:
-        # 새로 추가하신 '구분' 열이 있다면 그 값을 정확히 매칭
-        if '구분' in f_df.columns:
-            f_df = f_df[f_df['구분'] == spec]
+    sp = st.session_state.selected_spec
+    if st.session_state.selected_cat in ["TL", "TLX"]:
+        # [핵심] '구분'이라는 글자가 들어간 모든 열을 찾아서 필터링
+        gubun_col = [c for c in f_df.columns if "구분" in c]
+        if gubun_col:
+            f_df = f_df[f_df[gubun_col[0]] == sp]
+        else:
+            # 혹시나 '구분' 열이 없을 때를 대비한 백업 (이름에서 찾기)
+            f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(f"-{sp}", na=False)]
     else:
-        # BL 계열은 직경 수치로 매칭
-        f_df = f_df[f_df['직경'] == spec]
+        f_df = f_df[f_df['직경'] == sp]
 
 # --- 5. 사이드바 및 출력 ---
 st.sidebar.header("🏢 주문자 정보")
-cust_name = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
-mgr_name = st.sidebar.text_input("담당자명 (필수)")
+cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
+mgr_in = st.sidebar.text_input("담당자명 (필수)")
 
 if st.session_state['cart']:
     st.sidebar.divider()
@@ -182,7 +174,6 @@ for idx, row in f_df.iterrows():
         st.code(row['주문코드'])
         st.caption(f"📍 {row['직경']} x {row['길이']}")
         q = st.number_input("수량", 0, 100, key=f"q_{idx}")
-        # 장바구니 업데이트 로직 (생략 가능하나 유지를 위해)
-        k = f"row_{idx}"
-        if q > 0: st.session_state['cart'][k] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
-        else: st.session_state['cart'].pop(k, None)
+        # 카트 업데이트
+        if q > 0: st.session_state['cart'][f"row_{idx}"] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
+        else: st.session_state['cart'].pop(f"row_{idx}", None)
