@@ -5,9 +5,9 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v5.4", layout="centered")
+st.set_page_config(page_title="주문 시스템 v5.5", layout="centered")
 
-# --- 0. 담당자 및 URL 파라미터 세팅 (최상단) ---
+# --- 0. 담당자 및 URL 파라미터 세팅 ---
 SALES_REPS = {
     "lee": {"name": "이정현 과장", "id": "1781982606"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
@@ -51,10 +51,14 @@ def load_data():
         df['주문코드'] = df['주문코드'].apply(format_code_final)
         
         bio = [
-            {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.3ml', '주문코드': '075.101w', '직경': '-', '길이': '-', '구분': ''},
-            {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.7ml', '주문코드': '075.102w', '직경': '-', '길이': '-', '구분': ''}
+            {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.3ml', '직경': '-', '길이': '-', '구분': ''},
+            {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.7ml', '주문코드': '075.101w', '직경': '-', '길이': '-', '구분': ''}
         ]
-        return pd.concat([df, pd.DataFrame(bio)], ignore_index=True), "성공"
+        # Biomaterial 코드 보정 (075 유지)
+        bio_df = pd.DataFrame(bio)
+        bio_df['주문코드'] = ['075.101w', '075.102w'] 
+        
+        return pd.concat([df, bio_df], ignore_index=True), "성공"
     except Exception as e: return None, str(e)
 
 df, _ = load_data()
@@ -68,15 +72,15 @@ def send_telegram(msg, chat_id):
         return res.status_code == 200, res.text
     except Exception as e: return False, str(e)
 
-# --- 3. 주문 확인 다이얼로그 (교환 경고문 포함) ---
+# --- 3. 주문 확인 다이얼로그 ---
 @st.dialog("📋 주문 내역을 최종 확인합니다")
 def confirm_order_dialog(cust_name, mgr_name):
     st.write(f"🏢 **거래처**: {cust_name}")
     st.write(f"👤 **담당자**: {mgr_name}")
     st.divider()
     
-    is_exchange = st.checkbox("🔄 교환 주문인가요? (선납 처리)")
-    # [요청사항] 빨간색 볼드 경고문
+    # [수정] '(선납처리)' 문구 삭제
+    is_exchange = st.checkbox("🔄 교환 주문인가요?")
     st.markdown(":red[**※ 교환 보내실 제품은 유효기간 1년이상 남은 제품만 가능합니다.**]")
     
     st.divider()
@@ -150,7 +154,7 @@ if st.button("🔄 검색 조건 초기화", use_container_width=True):
 
 st.divider()
 
-# --- 6. [복구] 사이드바 올인원 (정보입력 + 장바구니 + 전송버튼) ---
+# --- 6. 사이드바 올인원 (정보입력 + 장바구니 + 전송버튼) ---
 st.sidebar.header("🏢 주문 정보 입력")
 cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_in = st.sidebar.text_input("담당자 성함 (필수)")
@@ -159,10 +163,10 @@ if st.session_state['cart']:
     st.sidebar.divider()
     st.sidebar.subheader(f"🛒 담은 품목 ({len(st.session_state['cart'])}건)")
     for v in st.session_state['cart'].values():
+        # 
         st.sidebar.caption(f"• {v['display_name']} / {v['q']}개")
     
     st.sidebar.divider()
-    # 전송 버튼을 사이드바 주문정보 바로 아래에 배치
     if st.sidebar.button("🚀 주문 전송하기", use_container_width=True, type="primary"):
         if not cust_in or not mgr_in:
             st.sidebar.error("정보를 모두 입력하세요!")
@@ -174,7 +178,7 @@ if st.session_state['cart']:
 else:
     st.sidebar.info("🛒 수량을 입력하여 제품을 담아주세요.")
 
-# --- 7. 데이터 필터링 로직 (v5.1 유지) ---
+# --- 7. 데이터 필터링 로직 ---
 f_df = df.copy()
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
@@ -218,6 +222,8 @@ for idx, row in f_df.iterrows():
         q = st.number_input("주문 수량", 0, 100, key=f"q_{idx}", value=int(prev_q))
         
         if q > 0:
-            st.session_state['cart'][item_key] = {'c': row['주문코드'], 'q': q, 'display_name': row['재질/표면처리']}
+            # [수정] display_name에 제품군, 재질, 직경, 길이 모두 포함
+            full_name = f"{row['제품군 대그룹 (Product Group)']} {row['재질/표면처리']} ({row['직경']}x{row['길이']})"
+            st.session_state['cart'][item_key] = {'c': row['주문코드'], 'q': q, 'display_name': full_name}
         else:
             st.session_state['cart'].pop(item_key, None)
