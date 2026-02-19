@@ -9,9 +9,9 @@ st.set_page_config(page_title="주문 시스템 v5.5", layout="centered")
 
 # --- 0. 담당자 및 URL 파라미터 세팅 ---
 SALES_REPS = {
-    "lee": {"name": "이정현 과장", "id": "1781982606"},
+    "lee": {"name": "이정현 과장", "id": "6769868107"},
     "park": {"name": "박성배 소장", "id": "여기에_박소장님_ID_입력"}, 
-    "jang": {"name": "장세진 차장", "id": "여기에_장차장님_ID_입력"}
+    "jang": {"name": "장세진 차장", "id": "8254830024"}
 }
 
 try:
