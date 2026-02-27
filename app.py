@@ -5,12 +5,24 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v6.0", layout="centered")
+st.set_page_config(page_title="주문 시스템 v6.1", layout="centered")
 
-# --- 0. 데이터 및 영업사원 로드 (reps.xlsx 연동) ---
+# --- 0. 영업사원 데이터 및 폴백(Fallback) 설정 ---
+# 엑셀 파일이 없을 때를 대비한 기본 명단입니다. (박소장님, 장차장님 정보 포함)
+DEFAULT_REPS = {
+    "lee": "이정현 과장",
+    "park": "박성배 소장",
+    "jang": "장세진 차장"
+}
+DEFAULT_IDS = {
+    "lee": "1781982606",
+    "park": "8613810133", # 박소장님께 숫자 ID 받아서 넣어주세요
+    "jang": "8254830024"  # 장차장님께 숫자 ID 받아서 넣어주세요
+}
+
 @st.cache_data
 def load_master_data():
-    # 1. 제품 데이터 로드 (021.xxxx 유지 로직 포함)
+    # 1. 제품 데이터 로드
     try:
         df = pd.read_excel("order_database.xlsx", dtype=str)
         df.columns = [c.strip() for c in df.columns]
@@ -21,11 +33,11 @@ def load_master_data():
             if not c or c.lower() == "nan": return ""
             if "." in c:
                 parts = c.split(".")
-                return f"{parts[0].zfill(3)}.{parts[1]}"
+                prefix = parts[0].zfill(3) if parts[0].isdigit() else parts[0]
+                return f"{prefix}.{parts[1]}"
             return c.zfill(3) if c.isdigit() else c
         df['주문코드'] = df['주문코드'].apply(format_code)
         
-        # Biomaterial 수동 추가
         bio = pd.DataFrame([
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.3ml', '주문코드': '075.101w', '직경': '-', '길이': '-', '구분': ''},
             {'제품군 대그룹 (Product Group)': 'Biomaterial', '재질/표면처리': 'Emdogain 0.7ml', '주문코드': '075.102w', '직경': '-', '길이': '-', '구분': ''}
@@ -33,43 +45,40 @@ def load_master_data():
         df = pd.concat([df, bio], ignore_index=True)
     except: df = pd.DataFrame()
 
-    # 2. 영업사원 데이터 로드 (reps.xlsx)
+    # 2. 영업사원 데이터 로드 (reps.xlsx가 있으면 덮어씌움)
+    reps_dict = DEFAULT_REPS.copy()
+    reps_id_dict = DEFAULT_IDS.copy()
+    
     try:
-        reps_df = pd.read_excel("reps.xlsx", dtype=str)
-        reps_df.columns = [c.strip() for c in reps_df.columns]
-        reps_dict = reps_df.set_index('코드')['이름'].to_dict()
-        reps_id_dict = reps_df.set_index('코드')['텔레그램ID'].to_dict()
-    except:
-        # 파일이 없을 때를 대비한 기본값 (과장님)
-        reps_dict = {"lee": "이정현 과장"}
-        reps_id_dict = {"lee": "1781982606"}
+        if os.path.exists("reps.xlsx"):
+            reps_df = pd.read_excel("reps.xlsx", dtype=str)
+            reps_df.columns = [c.strip() for c in reps_df.columns]
+            # 엑셀 데이터로 딕셔너리 업데이트
+            for _, row in reps_df.iterrows():
+                code = str(row['코드']).lower()
+                reps_dict[code] = row['이름']
+                reps_id_dict[code] = row['텔레그램ID']
+    except: pass
 
     return df, reps_dict, reps_id_dict
 
 df, reps_dict, reps_id_dict = load_master_data()
 
-# --- 1. 담당자 식별 및 파라미터 ---
-try:
-    p = st.query_params
-    rep_code = p.get("rep", "lee")
-    url_cust = p.get("cust", "")
-    if isinstance(rep_code, list): rep_code = rep_code[0]
-    if isinstance(url_cust, list): url_cust = url_cust[0]
-except:
-    rep_code, url_cust = "lee", ""
+# --- 1. 담당자 식별 ---
+p = st.query_params
+rep_code = str(p.get("rep", "lee")).lower()
+url_cust = p.get("cust", "")
 
 rep_name = reps_dict.get(rep_code, "담당자 미지정")
-rep_telegram_id = reps_id_dict.get(rep_code, "1781982606")
+# 해당 코드가 없으면 기본적으로 과장님께 전송되도록 설정
+rep_telegram_id = reps_id_dict.get(rep_code, DEFAULT_IDS["lee"])
 
-# --- 2. 사이드바 (공지사항 + 주문정보 + 장바구니) ---
+# --- 2. 사이드바 (공지사항 + 주문정보) ---
 st.sidebar.markdown("### 📢 공지사항")
 with st.sidebar.expander("💰 가격 인상 안내 (필독)", expanded=True):
-    st.info("**2026년 3월 1일부로 일부 품목의 가격이 평균 2.5% 인상될 예정입니다.**")
-    # 공문 사진 (notice.jpg 파일이 깃허브에 있어야 함)
-    if os.path.exists("notice.jpg"):
-        st.image("notice.jpg", caption="가격 인상 안내 공문")
-    elif os.path.exists("notice.png"):
-        st.image("notice.png", caption="가격 인상 안내 공문")
+    st.info("**2026년 3월 1일부로 일부 품목의 가격이 인상될 예정입니다.**")
+    if os.path.exists("notice.jpg"): st.image("notice.jpg", caption="가격 인상 안내 공문")
+    elif os.path.exists("notice.png"): st.image("notice.png", caption="가격 인상 안내 공문")
     st.caption("자세한 내용은 담당 영업사원에게 문의바랍니다.")
 
 st.sidebar.divider()
@@ -99,11 +108,14 @@ def confirm_order_dialog(c_name, m_name):
         order_list = "\n".join([f"{v['c']} / {v['q']}개" for v in st.session_state['cart'].values()])
         action = "선납주문 부탁드립니다." if is_ex else "주문부탁드립니다."
         msg = f"🔔 [{rep_name}] 주문접수\n🏢 {c_name}\n👤 {m_name}\n\n{order_list}\n\n{c_name} {action}"
+        
+        # [복구 확인] 여기서 식별된 담당자의 ID로 전송됩니다.
         if send_telegram(msg, rep_telegram_id)[0]:
             st.success("전송 완료!"); st.balloons()
             st.session_state['cart'] = {}; st.rerun()
+        else: st.error("전송 실패. 담당자 ID 설정을 확인하세요.")
 
-# --- 4. 메인 UI (필터 로직) ---
+# --- 4. 메인 화면 ---
 col_l, col_c, col_r = st.columns([1, 2, 1])
 with col_c:
     img = "logo.png" if os.path.exists("logo.png") else "logo.jpg"
@@ -161,7 +173,7 @@ if st.button("🔄 검색 조건 초기화", use_container_width=True):
     st.session_state.selected_cat = st.session_state.selected_mat = st.session_state.selected_spec = "전체"
     st.rerun()
 
-# --- 5. 사이드바 장바구니 & 전송 ---
+# --- 5. 사이드바 장바구니 ---
 if st.session_state['cart']:
     st.sidebar.divider()
     st.sidebar.subheader(f"🛒 담은 품목 ({len(st.session_state['cart'])}건)")
@@ -214,5 +226,3 @@ for idx, row in f_df.iterrows():
             full_n = f"{row['제품군 대그룹 (Product Group)']} {row['재질/표면처리']} ({row['직경']}x{row['길이']})"
             st.session_state['cart'][f"row_{idx}"] = {'c': row['주문코드'], 'q': q, 'display_name': full_n}
         else: st.session_state['cart'].pop(f"row_{idx}", None)
-
-
