@@ -64,7 +64,7 @@ rep_telegram_id = reps_id_dict.get(rep_code, "1781982606")
 # --- 2. 사이드바 (공지사항 + 주문정보 + 장바구니) ---
 st.sidebar.markdown("### 📢 공지사항")
 with st.sidebar.expander("💰 가격 인상 안내 (필독)", expanded=True):
-    st.info("**2026년 3월 1일부로 일부 품목의 가격이 2.5% 인상될 예정입니다.**")
+    st.info("**2026년 3월 1일부로 일부 품목의 가격이 평균 2.5% 인상될 예정입니다.**")
     # 공문 사진 (notice.jpg 파일이 깃허브에 있어야 함)
     if os.path.exists("notice.jpg"):
         st.image("notice.jpg", caption="가격 인상 안내 공문")
@@ -214,4 +214,5 @@ for idx, row in f_df.iterrows():
             full_n = f"{row['제품군 대그룹 (Product Group)']} {row['재질/표면처리']} ({row['직경']}x{row['길이']})"
             st.session_state['cart'][f"row_{idx}"] = {'c': row['주문코드'], 'q': q, 'display_name': full_n}
         else: st.session_state['cart'].pop(f"row_{idx}", None)
+
 
