@@ -5,7 +5,7 @@ import os
 import re
 
 # --- [규칙 1] 반드시 최상단 설정 ---
-st.set_page_config(page_title="주문 시스템 v6.2", layout="centered")
+st.set_page_config(page_title="주문 시스템 v6.3", layout="centered")
 
 # --- 0. 데이터 및 영업사원 로드 ---
 @st.cache_data
@@ -13,11 +13,12 @@ def load_master_data():
     try:
         df = pd.read_excel("order_database.xlsx", dtype=str)
         df.columns = [c.strip() for c in df.columns]
+        # 빈 칸을 확실하게 빈 문자열("")로 치환
         df = df.fillna("").apply(lambda x: x.str.strip())
         
         def format_code(c):
             c = str(c).strip()
-            if not c or c.lower() == "nan": return ""
+            if not c or c.lower() == "nan" or c == "": return ""
             if "." in c:
                 parts = c.split(".")
                 prefix = parts[0].zfill(3) if parts[0].isdigit() else parts[0]
@@ -32,9 +33,9 @@ def load_master_data():
         df = pd.concat([df, bio], ignore_index=True)
     except: df = pd.DataFrame()
 
-    # 영업사원 데이터 (reps.xlsx)
+    # 영업사원 기본값 (박소장님, 장차장님 아이디 찾으시면 여기에 교체하세요!)
     reps_dict = {"lee": "이정현 과장", "park": "박성배 소장", "jang": "장세진 차장"}
-    reps_id_dict = {"lee": "1781982606", "park": "8613810133", "jang": "8254830024"}
+    reps_id_dict = {"lee": "6769868107", "park": "8613810133", "jang": "8254830024"}
     
     try:
         if os.path.exists("reps.xlsx"):
@@ -47,24 +48,24 @@ def load_master_data():
 
 df, reps_dict, reps_id_dict = load_master_data()
 
-# --- 1. 담당자 및 파라미터 ---
+# --- 1. 담당자 식별 ---
 p = st.query_params
 rep_code = str(p.get("rep", "lee")).lower()
 url_cust = p.get("cust", "")
 rep_name = reps_dict.get(rep_code, "담당자 미지정")
 rep_telegram_id = reps_id_dict.get(rep_code, reps_id_dict["lee"])
 
-# --- 2. 사이드바 (공지사항 + 주문정보) ---
+# --- 2. 사이드바 (공지사항) ---
 st.sidebar.markdown("### 📢 공지사항")
-with st.sidebar.expander("💰 가격 인상 안내 (필독)", expanded=True):
+with st.sidebar.expander("💰 가격 인상 안내", expanded=True):
     if os.path.exists("notice.jpg"): st.image("notice.jpg")
-    st.info("**2026년 3월 1일부로 일부 품목 가격 인상**")
+    st.info("**2026년 3월 1일부 가격 인상**")
 
 st.sidebar.divider()
 cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
 mgr_in = st.sidebar.text_input("담당자 성함 (필수)")
 
-# --- 3. 텔레그램 및 팝업 ---
+# --- 3. 텔레그램 전송 ---
 TOKEN = "7990356470:AAFeLyeK-8V4Misqb0SDutxa6zpYx_abnGw"
 def send_telegram(msg, chat_id):
     url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
@@ -73,9 +74,9 @@ def send_telegram(msg, chat_id):
         return res.status_code == 200, res.text
     except Exception as e: return False, str(e)
 
-@st.dialog("📋 주문 내역 확인")
+@st.dialog("📋 주문 확인")
 def confirm_order_dialog(c_n, m_n):
-    is_ex = st.checkbox("🔄 교환 주문인가요?")
+    is_ex = st.checkbox("🔄 교환 주문")
     st.markdown(":red[**※ 유효기간 1년이상 제품만 가능**]")
     st.divider()
     for item in st.session_state['cart'].values():
@@ -87,7 +88,7 @@ def confirm_order_dialog(c_n, m_n):
         if send_telegram(msg, rep_telegram_id)[0]:
             st.success("완료!"); st.session_state['cart'] = {}; st.rerun()
 
-# --- 4. 메인 화면 & 필터링 (핵심 수정 파트) ---
+# --- 4. 메인 화면 & 동적 버튼 로직 ---
 col_l, col_c, col_r = st.columns([1, 2, 1])
 with col_c:
     img = "logo.png" if os.path.exists("logo.png") else "logo.jpg"
@@ -111,7 +112,7 @@ for idx, row_cats in enumerate([r1, r2]):
                 st.session_state.selected_cat, st.session_state.selected_mat, st.session_state.selected_spec = cat, "전체", "전체"
                 st.rerun()
 
-# [STEP 2] 재질 (현재 시스템에서 가능한 재질만 추출)
+# [STEP 2] 재질
 if st.session_state.selected_cat not in ["전체", "Biomaterial"]:
     st.write("### 2️⃣ 재질/표면처리")
     mats = ["Ti-SLA", "Roxolid SLA", "Roxolid SLActive"]
@@ -122,59 +123,65 @@ if st.session_state.selected_cat not in ["전체", "Biomaterial"]:
                 st.session_state.selected_mat, st.session_state.selected_spec = m, "전체"
                 st.rerun()
 
-# [STEP 3] 상세 규격 (데이터가 있는 것만 버튼으로 생성)
+# [STEP 3] 상세 규격 (TL/TLX 분리 강화 및 nan 제거)
 if st.session_state.selected_mat != "전체":
     st.write("### 3️⃣ 상세 규격 선택")
     cur = st.session_state.selected_cat
     mat = st.session_state.selected_mat
     
-    # [핵심] 현재 선택된 시스템+재질에 실제로 존재하는 데이터만 필터링
-    temp_df = df[df['제품군 대그룹 (Product Group)'].str.contains(cur, na=False)]
+    # [수정] 현재 시스템에 정확히 일치하는 데이터만 필터링
+    if cur == "TL":
+        temp_df = df[df['제품군 대그룹 (Product Group)'].str.startswith("TL", na=False) & ~df['제품군 대그룹 (Product Group)'].str.startswith("TLX", na=False)]
+    elif cur == "BL":
+        temp_df = df[df['제품군 대그룹 (Product Group)'].str.fullmatch("BL", case=False) | (df['제품군 대그룹 (Product Group)'].str.startswith("BL ", na=False))]
+    else:
+        temp_df = df[df['제품군 대그룹 (Product Group)'].str.contains(cur, na=False)]
+
+    # 재질 필터링
     if mat == "Ti-SLA":
-        temp_df = temp_df[~temp_df['재질/표면처리'].str.contains("Roxolid", na=False) & temp_df['재질/표면처리'].str.contains("SLA", na=False)]
+        temp_df = temp_df[~temp_df['재질/표면처리'].str.contains("Roxolid", na=False) & temp_df['재질/표면처리'].str.contains("SLA", na=False) & ~temp_df['재질/표면처리'].str.contains("SLActive", na=False)]
     elif mat == "Roxolid SLA":
         temp_df = temp_df[temp_df['재질/표면처리'].str.contains("Roxolid", na=False) & ~temp_df['재질/표면처리'].str.contains("SLActive", na=False)]
     else: # SLActive
         temp_df = temp_df[temp_df['재질/표면처리'].str.contains("SLActive", na=False)]
 
-    # [수정] TL도 BL처럼 직경(숫자) 버튼을 보여주되, 구분(S, SP) 정보를 병기
-    if "TL" in cur:
-        # 데이터가 있는 '직경' 목록 추출
-        available_specs = sorted(temp_df['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
-        s_cols = st.columns(len(available_specs) if available_specs else 1)
+    # 사용 가능한 직경 버튼 생성
+    available_specs = sorted(temp_df['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
+    
+    if available_specs:
+        s_cols = st.columns(len(available_specs) if len(available_specs) <= 5 else 5)
         for i, s in enumerate(available_specs):
-            with s_cols[i]:
-                # 해당 직경의 첫 번째 행에서 '구분' 값을 가져와 라벨에 표시 (예: 3.3 (S))
-                gubun = temp_df[temp_df['직경'] == s]['구분'].iloc[0] if '구분' in temp_df.columns else ""
-                label = f"Ø {s} ({gubun})" if gubun else f"Ø {s}"
+            with s_cols[i % 5]:
+                # [핵심] nan 방지 로직: '구분' 값이 유효한지 체크
+                res = temp_df[temp_df['직경'] == s]['구분']
+                gubun = res.iloc[0] if not res.empty else ""
+                
+                # gubun이 "nan" 문자열이거나 비어있으면 표시 안 함
+                clean_gubun = "" if (str(gubun).lower() == "nan" or not gubun) else str(gubun)
+                label = f"Ø {s} ({clean_gubun})" if clean_gubun else f"Ø {s}"
+                
                 if st.button(label, use_container_width=True, type="primary" if st.session_state.selected_spec == s else "secondary"):
-                    st.session_state.selected_spec = s; st.rerun()
-    else:
-        # BL 계열 동적 버튼
-        available_specs = sorted(temp_df['직경'].unique(), key=lambda x: float(x) if x.replace('.','').isdigit() else 0)
-        s_cols = st.columns(len(available_specs) if available_specs else 1)
-        for i, s in enumerate(available_specs):
-            with s_cols[i]:
-                if st.button(f"Ø {s}", use_container_width=True, type="primary" if st.session_state.selected_spec == s else "secondary"):
                     st.session_state.selected_spec = s; st.rerun()
 
 st.divider()
 
-# --- 5. 데이터 필터링 및 출력 ---
+# --- 5. 최종 필터링 및 리스트 ---
 f_df = df.copy()
-# (기존 필터 로직 유지...)
+# 시스템 필터 (격리 로직 적용)
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
-    if c == "BL": f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.startswith("BL", na=False) & ~f_df['제품군 대그룹 (Product Group)'].str.startswith("BLT", na=False) & ~f_df['제품군 대그룹 (Product Group)'].str.startswith("BLX", na=False)]
-    elif c == "TL": f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.startswith("TL", na=False) & ~f_df['제품군 대그룹 (Product Group)'].str.startswith("TLX", na=False)]
+    if c == "TL": f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.startswith("TL", na=False) & ~f_df['제품군 대그룹 (Product Group)'].str.startswith("TLX", na=False)]
+    elif c == "BL": f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.fullmatch("BL", case=False) | (f_df['제품군 대그룹 (Product Group)'].str.startswith("BL ", na=False))]
     else: f_df = f_df[f_df['제품군 대그룹 (Product Group)'].str.contains(c, na=False)]
 
+# 재질 필터
 if st.session_state.selected_mat != "전체":
     mt = st.session_state.selected_mat
     if mt == "Ti-SLA": f_df = f_df[~f_df['재질/표면처리'].str.contains("Roxolid", na=False) & f_df['재질/표면처리'].str.contains("SLA", na=False) & ~f_df['재질/표면처리'].str.contains("SLActive", na=False)]
     elif mt == "Roxolid SLA": f_df = f_df[f_df['재질/표면처리'].str.contains("Roxolid", na=False) & f_df['재질/표면처리'].str.contains("SLA", na=False) & ~f_df['재질/표면처리'].str.contains("SLActive", na=False)]
     elif mt == "Roxolid SLActive": f_df = f_df[f_df['재질/표면처리'].str.contains("SLActive", na=False)]
 
+# 직경 필터
 if st.session_state.selected_spec != "전체":
     f_df = f_df[f_df['직경'] == st.session_state.selected_spec]
 
