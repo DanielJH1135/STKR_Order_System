@@ -60,7 +60,7 @@ url_cust = p.get("cust", "")
 st.sidebar.markdown("### 📢 공지사항")
 with st.sidebar.expander("💰 가격 인상 안내", expanded=True):
     if os.path.exists("notice.jpg"): st.image("notice.jpg")
-    st.info("**2026년 3월 1일부 가격 인상**")
+    st.info("**2026년 3월 1일부로 일부제품의 평균2.5% 가격인상이 있습니다. 많은 양해 부탁드립니다. 더 좋은 품질과 서비스로 찾아뵙겠습니다.**")
 
 st.sidebar.divider()
 cust_in = st.sidebar.text_input("거래처명", value=url_cust, disabled=(url_cust != ""))
@@ -193,3 +193,4 @@ if st.session_state['cart']:
     if st.sidebar.button("🚀 주문 전송하기", use_container_width=True, type="primary"):
         if not cust_in or not mgr_in: st.sidebar.error("정보 입력 필수!")
         else: confirm_order_dialog(cust_in, mgr_in)
+
