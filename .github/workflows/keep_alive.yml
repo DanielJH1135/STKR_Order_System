@@ -1,0 +1,26 @@
+name: Wake Up Streamlit
+
+on:
+  schedule:
+    # 매일 한국 시간 기준 오전 9시에 실행 (UTC 00:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 직접 실행해보고 싶을 때 쓰는 버튼 생성
+
+jobs:
+  auto_commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+      
+      - name: Create or update keep_alive.txt
+        run: |
+          date > keep_alive.txt
+          
+      - name: Push changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add keep_alive.txt
+          git commit -m "Keep app alive - Heartbeat" || echo "No changes to commit"
+          git push
