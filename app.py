@@ -39,20 +39,31 @@ def load_master_data():
 
 df = load_master_data()
 
-# --- 0-1. 영업사원 설정 ---
+# --- 0-1. 영업사원 설정 (기존 인원 유지 + 엑셀 자동 매핑) ---
+# 기존 대구팀 기본 정보
 reps_dict = {"lee": "이정현 과장", "park": "박성배 소장", "jang": "장세진 차장"}
 reps_id_dict = {"lee": "6769868107", "park": "8613810133", "jang": "8254830024"} 
 
 try:
     if os.path.exists("reps.xlsx"):
+        # 엑셀 로드 (이미지의 컬럼명 반영: 코드, 직급/성함, 텔레그램ID)
         reps_df = pd.read_excel("reps.xlsx", dtype=str)
-        reps_dict.update(reps_df.set_index('코드')['이름'].to_dict())
+        
+        # 데이터 정제 (공백 제거 및 소문자화)
+        reps_df['코드'] = reps_df['코드'].str.strip().str.lower()
+        reps_df['직급/성함'] = reps_df['직급/성함'].str.strip()
+        reps_df['텔레그램ID'] = reps_df['텔레그램ID'].str.strip()
+        
+        # 기존 딕셔너리에 추가/업데이트 (update 메서드는 기존 키는 유지하고 새 키는 추가함)
+        reps_dict.update(reps_df.set_index('코드')['직급/성함'].to_dict())
         reps_id_dict.update(reps_df.set_index('코드')['텔레그램ID'].to_dict())
-except: pass
+except Exception as e:
+    pass
 
 p = st.query_params
 rep_code = str(p.get("rep", "lee")).lower()
-rep_name = reps_dict.get(rep_code, "담당자 미지정")
+# 매핑된 정보가 없으면 기본값(이정현 과장)으로 설정
+rep_name = reps_dict.get(rep_code, "이정현 과장")
 rep_telegram_id = reps_id_dict.get(rep_code, reps_id_dict["lee"])
 url_cust = p.get("cust", "")
 
@@ -154,7 +165,7 @@ if st.session_state.selected_mat != "전체":
 
 st.divider()
 
-# --- 5. 최종 필터링 및 리스트 (폰트 수정 부분) ---
+# --- 5. 최종 필터링 및 리스트 ---
 f_df = df.copy()
 if st.session_state.selected_cat != "전체":
     c = st.session_state.selected_cat
@@ -177,7 +188,7 @@ for idx, row in f_df.iterrows():
         st.write(f"**{row['제품군 대그룹 (Product Group)']} - {row['재질/표면처리']}**")
         st.code(row['주문코드'])
         
-        # [수정 포인트] 직경 x 길이 폰트 확대 및 강조
+        # 직경 x 길이 폰트 확대 및 강조
         st.markdown(f"<p style='font-size: 19px; font-weight: bold; color: #333; margin-bottom: 0px;'>📍 {row['직경']} x {row['길이']}</p>", unsafe_allow_html=True)
         
         q = st.number_input("주문 수량", 0, 100, key=f"q_{idx}", value=int(st.session_state['cart'].get(f"row_{idx}", {}).get('q', 0)))
@@ -193,4 +204,3 @@ if st.session_state['cart']:
     if st.sidebar.button("🚀 주문 전송하기", use_container_width=True, type="primary"):
         if not cust_in or not mgr_in: st.sidebar.error("정보 입력 필수!")
         else: confirm_order_dialog(cust_in, mgr_in)
-
